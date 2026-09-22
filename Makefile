@@ -48,8 +48,5 @@ run-scalar: $(BIN_DIR)/norm_scalar
 run-vector: $(BIN_DIR)/norm_vector
 	./$(BIN_DIR)/norm_vector data/input.dat data/output_vector.dat 10
 
-debug-vector: $(BIN_DIR)/norm_vector
-	gdb -batch -x tools/debug_session.gdb ./$(BIN_DIR)/norm_vector
-
 clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)
