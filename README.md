@@ -2,7 +2,7 @@
 
 Implementación y evaluación cuantitativa de rendimiento entre una solución escalar (SSE) y una vectorial (AVX2 de 256 bits) para cálculo de descriptores estadísticos y normalización $z$-score.
 
-> **Documentación Completa:** El informe técnico formal, análisis microarquitectónico, benchmarks y diagramas se encuentran en [`docs/informe.pdf`](docs/informe.pdf) y [`docs/diagrams/`](docs/diagrams/).
+> **Documentación Completa:** El informe técnico formal, análisis microarquitectónico, benchmarks y diagramas se encuentran en [`Informe_Arquitectura_de_Computadores_1.pdf`](Informe_Arquitectura_de_Computadores_1.pdf) y [`PDF de Diagramas.pdf`](PDF%20de%20Diagramas.pdf).
 
 ---
 
