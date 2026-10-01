@@ -1,0 +1,314 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 880" width="100%" height="100%" style="background:#0b0f19; font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <!-- Linear Gradients -->
+    <linearGradient id="grad-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="grad-amber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="grad-emerald" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <linearGradient id="grad-purple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="grad-rose" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e11d48"/>
+      <stop offset="100%" stop-color="#f43f5e"/>
+    </linearGradient>
+    <linearGradient id="card-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Filters for Glow and Shadow -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+    <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Marker Arrowheads -->
+    <marker id="arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 1 L 7 4 L 0 7 z" fill="#38bdf8"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 1 L 7 4 L 0 7 z" fill="#a78bfa"/>
+    </marker>
+    <marker id="arrow-emerald" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 1 L 7 4 L 0 7 z" fill="#34d399"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 1 L 7 4 L 0 7 z" fill="#fbbf24"/>
+    </marker>
+  </defs>
+
+  <!-- Background Grid Pattern -->
+  <g opacity="0.07">
+    <path d="M 0 40 L 1280 40 M 0 80 L 1280 80 M 0 120 L 1280 120 M 0 160 L 1280 160 M 0 200 L 1280 200 M 0 240 L 1280 240 M 0 280 L 1280 280 M 0 320 L 1280 320 M 0 360 L 1280 360 M 0 400 L 1280 400 M 0 440 L 1280 440 M 0 480 L 1280 480 M 0 520 L 1280 520 M 0 560 L 1280 560 M 0 600 L 1280 600 M 0 640 L 1280 640 M 0 680 L 1280 680 M 0 720 L 1280 720 M 0 760 L 1280 760 M 0 800 L 1280 800 M 0 840 L 1280 840" stroke="#94a3b8" stroke-width="1"/>
+    <path d="M 40 0 L 40 880 M 80 0 L 80 880 M 120 0 L 120 880 M 160 0 L 160 880 M 200 0 L 200 880 M 240 0 L 240 880 M 280 0 L 280 880 M 320 0 L 320 880 M 360 0 L 360 880 M 400 0 L 400 880 M 440 0 L 440 880 M 480 0 L 480 880 M 520 0 L 520 880 M 560 0 L 560 880 M 600 0 L 600 880 M 640 0 L 640 880 M 680 0 L 680 880 M 720 0 L 720 880 M 760 0 L 760 880 M 800 0 L 800 880 M 840 0 L 840 880 M 880 0 L 880 880 M 920 0 L 920 880 M 960 0 L 960 880 M 1000 0 L 1000 880 M 1040 0 L 1040 880 M 1080 0 L 1080 880 M 1120 0 L 1120 880 M 1160 0 L 1160 880 M 1200 0 L 1200 880 M 1240 0 L 1240 880" stroke="#94a3b8" stroke-width="1"/>
+  </g>
+
+  <!-- ==================== HEADER ==================== -->
+  <g transform="translate(40, 24)">
+    <rect x="0" y="0" width="180" height="26" rx="13" fill="#1e293b" stroke="#38bdf8" stroke-width="1"/>
+    <text x="90" y="17" fill="#38bdf8" font-size="11" font-weight="700" text-anchor="middle" letter-spacing="1">ARQUITECTURA DE SOFTWARE</text>
+    <text x="0" y="52" fill="#f8fafc" font-size="24" font-weight="800" letter-spacing="-0.5">Módulos del Sistema y Protocolo System V AMD64 ABI</text>
+    <text x="0" y="74" fill="#94a3b8" font-size="13">Interconexión entre el driver C, encabezados de enlace y kernels ensamblador NASM (Escalar y AVX2)</text>
+  </g>
+
+  <!-- ==================== TOP LEVEL MODULES ==================== -->
+  <!-- Module 1: Driver C (src/driver.c) -->
+  <g transform="translate(40, 115)" filter="url(#shadow)">
+    <rect x="0" y="0" width="360" height="210" rx="12" fill="url(#card-bg)" stroke="#0284c7" stroke-width="2"/>
+    <path d="M 0 12 Q 0 0 12 0 L 348 0 Q 360 0 360 12 L 360 38 L 0 38 Z" fill="url(#grad-cyan)"/>
+    <text x="16" y="24" fill="#ffffff" font-size="14" font-weight="700">src/driver.c</text>
+    <text x="344" y="24" fill="#e0f2fe" font-size="11" font-weight="600" text-anchor="end">C11 (GCC / Clang)</text>
+    
+    <text x="16" y="60" fill="#f1f5f9" font-size="12" font-weight="600">Responsabilidades Principales:</text>
+    <circle cx="24" cy="78" r="3" fill="#38bdf8"/>
+    <text x="34" y="82" fill="#cbd5e1" font-size="11">Lectura I/O binaria: <tspan fill="#7dd3fc" font-family="monospace">read_input()</tspan></text>
+    
+    <circle cx="24" cy="98" r="3" fill="#38bdf8"/>
+    <text x="34" y="102" fill="#cbd5e1" font-size="11">Alineación 32B: <tspan fill="#7dd3fc" font-family="monospace">aligned_alloc(32, padded)</tspan></text>
+    
+    <circle cx="24" cy="118" r="3" fill="#38bdf8"/>
+    <text x="34" y="122" fill="#cbd5e1" font-size="11">Medición de latencia: <tspan fill="#7dd3fc" font-family="monospace">clock_gettime(MONOTONIC)</tspan></text>
+    
+    <circle cx="24" cy="138" r="3" fill="#38bdf8"/>
+    <text x="34" y="142" fill="#cbd5e1" font-size="11">Despacho de kernels estadísticos y de normalizado</text>
+
+    <circle cx="24" cy="158" r="3" fill="#38bdf8"/>
+    <text x="34" y="162" fill="#cbd5e1" font-size="11">Escritura de resumen y binario <tspan fill="#7dd3fc" font-family="monospace">output.dat</tspan></text>
+
+    <!-- Small footer badge -->
+    <rect x="16" y="176" width="328" height="22" rx="4" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+    <text x="180" y="191" fill="#94a3b8" font-size="10.5" text-anchor="middle">Invocador Caller: prepara argumentos según System V ABI</text>
+  </g>
+
+  <!-- Module 2: Interface Header (include/stats.h) -->
+  <g transform="translate(460, 115)" filter="url(#shadow)">
+    <rect x="0" y="0" width="360" height="210" rx="12" fill="url(#card-bg)" stroke="#d97706" stroke-width="2"/>
+    <path d="M 0 12 Q 0 0 12 0 L 348 0 Q 360 0 360 12 L 360 38 L 0 38 Z" fill="url(#grad-amber)"/>
+    <text x="16" y="24" fill="#ffffff" font-size="14" font-weight="700">include/stats.h</text>
+    <text x="344" y="24" fill="#fef3c7" font-size="11" font-weight="600" text-anchor="end">Contrato de Enlace C</text>
+
+    <text x="16" y="58" fill="#fde68a" font-family="monospace" font-size="10.5" font-weight="600">extern "C" {</text>
+    
+    <rect x="12" y="66" width="336" height="34" rx="4" fill="#0f172a" stroke="#b45309" stroke-width="0.8"/>
+    <text x="20" y="80" fill="#94a3b8" font-family="monospace" font-size="9.5">// Kernel 1: Reducción Suma</text>
+    <text x="20" y="93" fill="#f8fafc" font-family="monospace" font-size="10.5">float <tspan fill="#fbbf24" font-weight="700">sum_array</tspan>(const float *arr, int n);</text>
+
+    <rect x="12" y="104" width="336" height="42" rx="4" fill="#0f172a" stroke="#b45309" stroke-width="0.8"/>
+    <text x="20" y="118" fill="#94a3b8" font-family="monospace" font-size="9.5">// Kernel 2: Métricas Estadísticas</text>
+    <text x="20" y="131" fill="#f8fafc" font-family="monospace" font-size="10">void <tspan fill="#fbbf24" font-weight="700">compute_stats</tspan>(const float *arr, int n,</text>
+    <text x="50" y="142" fill="#f8fafc" font-family="monospace" font-size="10">float *mean, float *var, float *min, float *max);</text>
+
+    <rect x="12" y="150" width="336" height="42" rx="4" fill="#0f172a" stroke="#b45309" stroke-width="0.8"/>
+    <text x="20" y="164" fill="#94a3b8" font-family="monospace" font-size="9.5">// Kernel 3: Z-Score Normalization</text>
+    <text x="20" y="177" fill="#f8fafc" font-family="monospace" font-size="10">void <tspan fill="#fbbf24" font-weight="700">normalize_array</tspan>(const float *in, float *out,</text>
+    <text x="50" y="188" fill="#f8fafc" font-family="monospace" font-size="10">int n, float mean, float stddev);</text>
+    
+    <text x="16" y="204" fill="#fde68a" font-family="monospace" font-size="10.5" font-weight="600">}</text>
+  </g>
+
+  <!-- Module 3: Assembly Kernels -->
+  <g transform="translate(880, 115)" filter="url(#shadow)">
+    <!-- Scalar Engine -->
+    <rect x="0" y="0" width="360" height="98" rx="10" fill="url(#card-bg)" stroke="#059669" stroke-width="2"/>
+    <path d="M 0 10 Q 0 0 10 0 L 350 0 Q 360 0 360 10 L 360 28 L 0 28 Z" fill="url(#grad-emerald)"/>
+    <text x="14" y="19" fill="#ffffff" font-size="12.5" font-weight="700">asm/scalar/stats_scalar.asm</text>
+    <text x="346" y="19" fill="#d1fae5" font-size="10.5" font-weight="600" text-anchor="end">NASM (x86-64 SISD)</text>
+    <text x="14" y="46" fill="#cbd5e1" font-size="11">Implementación escalar base (1 float/iter)</text>
+    <text x="14" y="62" fill="#94a3b8" font-size="10.5">Instrucciones: <tspan fill="#6ee7b7" font-family="monospace">movss, addss, minss, maxss, subss, divss</tspan></text>
+    <text x="14" y="80" fill="#a7f3d0" font-size="10.5" font-weight="600">Compilación: <tspan fill="#ffffff" font-family="monospace">obj/stats_scalar.o ➔ bin/norm_scalar</tspan></text>
+
+    <!-- Vector Engine -->
+    <g transform="translate(0, 112)">
+      <rect x="0" y="0" width="360" height="98" rx="10" fill="url(#card-bg)" stroke="#7c3aed" stroke-width="2"/>
+      <path d="M 0 10 Q 0 0 10 0 L 350 0 Q 360 0 360 10 L 360 28 L 0 28 Z" fill="url(#grad-purple)"/>
+      <text x="14" y="19" fill="#ffffff" font-size="12.5" font-weight="700">asm/vector/stats_vector.asm</text>
+      <text x="346" y="19" fill="#ede9fe" font-size="10.5" font-weight="600" text-anchor="end">NASM (AVX2 SIMD 256-bit)</text>
+      <text x="14" y="46" fill="#cbd5e1" font-size="11">Implementación SIMD vectorial (8 floats/iter)</text>
+      <text x="14" y="62" fill="#94a3b8" font-size="10.5">Instrucciones: <tspan fill="#c4b5fd" font-family="monospace">vmovaps, vaddps, vsubps, vmulps, vdivps, vzeroupper</tspan></text>
+      <text x="14" y="80" fill="#ddd6fe" font-size="10.5" font-weight="600">Compilación: <tspan fill="#ffffff" font-family="monospace">obj/stats_vector.o ➔ bin/norm_vector</tspan></text>
+    </g>
+  </g>
+
+  <!-- Connectors from Modules -->
+  <path d="M 400 220 L 460 220" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrow-cyan)"/>
+  <path d="M 820 160 L 880 160" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-emerald)"/>
+  <path d="M 820 270 L 880 270" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow-purple)"/>
+
+  <!-- ==================== SYSTEM V AMD64 ABI PROTOCOL PANEL ==================== -->
+  <g transform="translate(40, 350)" filter="url(#shadow)">
+    <!-- Container -->
+    <rect x="0" y="0" width="1200" height="500" rx="14" fill="#131d31" stroke="#334155" stroke-width="1.5"/>
+    
+    <!-- Title Bar -->
+    <rect x="0" y="0" width="1200" height="42" rx="14" fill="#1e293b"/>
+    <path d="M 0 32 L 0 42 L 1200 42 L 1200 32 Z" fill="#1e293b"/>
+    <text x="24" y="26" fill="#38bdf8" font-size="14" font-weight="800" letter-spacing="1">PROTOCOLO DE LLAMADA SYSTEM V AMD64 ABI (x86-64 / LINUX)</text>
+    <text x="1176" y="26" fill="#94a3b8" font-size="11.5" text-anchor="end">Convención estándar de pasaje de parámetros por registros hardware</text>
+
+    <!-- ================= SUB-PANEL 1: ARGUMENT REGISTERS PIPELINE ================= -->
+    <g transform="translate(24, 60)">
+      <text x="0" y="14" fill="#f8fafc" font-size="13" font-weight="700">1. Pipeline de Paso de Parámetros (Calling Sequence)</text>
+      
+      <!-- GPR Integer/Pointer Registers Row -->
+      <g transform="translate(0, 26)">
+        <text x="0" y="22" fill="#94a3b8" font-size="11" font-weight="600">Enteros y Punteros (GPRs 64-bit):</text>
+        
+        <!-- RDI Card -->
+        <g transform="translate(180, 0)">
+          <rect x="0" y="0" width="140" height="52" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+          <text x="12" y="20" fill="#38bdf8" font-family="monospace" font-size="13" font-weight="700">1º RDI / EDI</text>
+          <text x="12" y="38" fill="#94a3b8" font-size="10.5">const float *arr / in</text>
+        </g>
+        
+        <!-- RSI Card -->
+        <g transform="translate(330, 0)">
+          <rect x="0" y="0" width="140" height="52" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+          <text x="12" y="20" fill="#38bdf8" font-family="monospace" font-size="13" font-weight="700">2º RSI / ESI</text>
+          <text x="12" y="38" fill="#94a3b8" font-size="10.5">int n / float *out</text>
+        </g>
+
+        <!-- RDX Card -->
+        <g transform="translate(480, 0)">
+          <rect x="0" y="0" width="140" height="52" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+          <text x="12" y="20" fill="#38bdf8" font-family="monospace" font-size="13" font-weight="700">3º RDX / EDX</text>
+          <text x="12" y="38" fill="#94a3b8" font-size="10.5">float *mean / int n</text>
+        </g>
+
+        <!-- RCX Card -->
+        <g transform="translate(630, 0)">
+          <rect x="0" y="0" width="140" height="52" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+          <text x="12" y="20" fill="#38bdf8" font-family="monospace" font-size="13" font-weight="700">4º RCX</text>
+          <text x="12" y="38" fill="#94a3b8" font-size="10.5">float *var</text>
+        </g>
+
+        <!-- R8 Card -->
+        <g transform="translate(780, 0)">
+          <rect x="0" y="0" width="140" height="52" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+          <text x="12" y="20" fill="#38bdf8" font-family="monospace" font-size="13" font-weight="700">5º R8</text>
+          <text x="12" y="38" fill="#94a3b8" font-size="10.5">float *min</text>
+        </g>
+
+        <!-- R9 Card -->
+        <g transform="translate(930, 0)">
+          <rect x="0" y="0" width="140" height="52" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+          <text x="12" y="20" fill="#38bdf8" font-family="monospace" font-size="13" font-weight="700">6º R9</text>
+          <text x="12" y="38" fill="#94a3b8" font-size="10.5">float *max</text>
+        </g>
+      </g>
+
+      <!-- SIMD Float Arguments & Return Row -->
+      <g transform="translate(0, 88)">
+        <text x="0" y="22" fill="#94a3b8" font-size="11" font-weight="600">Flotantes Escalares / SIMD (XMM):</text>
+        
+        <!-- XMM0 Card -->
+        <g transform="translate(180, 0)">
+          <rect x="0" y="0" width="220" height="50" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+          <text x="12" y="19" fill="#34d399" font-family="monospace" font-size="13" font-weight="700">XMM0 (Arg 1 / Retorno)</text>
+          <text x="12" y="36" fill="#94a3b8" font-size="10.5">Arg: float mean | Ret: float sum</text>
+        </g>
+
+        <!-- XMM1 Card -->
+        <g transform="translate(415, 0)">
+          <rect x="0" y="0" width="205" height="50" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+          <text x="12" y="19" fill="#34d399" font-family="monospace" font-size="13" font-weight="700">XMM1 (Arg 2 Flotante)</text>
+          <text x="12" y="36" fill="#94a3b8" font-size="10.5">Arg: float stddev</text>
+        </g>
+
+        <!-- XMM2..XMM7 Card -->
+        <g transform="translate(635, 0)">
+          <rect x="0" y="0" width="205" height="50" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+          <text x="12" y="19" fill="#94a3b8" font-family="monospace" font-size="12" font-weight="600">XMM2 .. XMM7</text>
+          <text x="12" y="36" fill="#64748b" font-size="10.5">Flotantes adicionales (No usados)</text>
+        </g>
+
+        <!-- Stack Alignment Requirement Card -->
+        <g transform="translate(855, 0)">
+          <rect x="0" y="0" width="295" height="50" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1.2"/>
+          <text x="12" y="19" fill="#fbbf24" font-family="monospace" font-size="11.5" font-weight="700">RSP (Alineación de Pila 16B)</text>
+          <text x="12" y="36" fill="#cbd5e1" font-size="10.5">(RSP + 8) % 16 == 0 al ingresar a función</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- ================= SUB-PANEL 2: CALLEE-SAVED VS CALLER-SAVED ================= -->
+    <g transform="translate(24, 218)">
+      <text x="0" y="14" fill="#f8fafc" font-size="13" font-weight="700">2. Clasificación de Registros: Preservación de Estado</text>
+
+      <!-- Callee-Saved Box (Non-Volatile) -->
+      <g transform="translate(0, 26)">
+        <rect x="0" y="0" width="565" height="85" rx="8" fill="#1e293b" stroke="#ef4444" stroke-width="1.5"/>
+        <path d="M 0 8 Q 0 0 8 0 L 557 0 Q 565 0 565 8 L 565 24 L 0 24 Z" fill="url(#grad-rose)"/>
+        <text x="12" y="16" fill="#ffffff" font-size="11" font-weight="700">CALLEE-SAVED (No Volátiles) — ¡El Kernel DEBE Preservar en Pila si los Modifica!</text>
+        <text x="12" y="44" fill="#fca5a5" font-family="monospace" font-size="13" font-weight="700">RBX, RBP, R12, R13, R14, R15, RSP</text>
+        <text x="12" y="62" fill="#cbd5e1" font-size="10.5">Uso en <tspan fill="#fca5a5" font-family="monospace">compute_stats</tspan>: se respaldan en el prólogo (<tspan font-family="monospace">push</tspan>) y se restauran en el epílogo (<tspan font-family="monospace">pop</tspan>).</text>
+        <text x="12" y="76" fill="#94a3b8" font-size="10">Permiten retener punteros base y variables vivas sin que llamadas intermedias corrompan su contenido.</text>
+      </g>
+
+      <!-- Caller-Saved Box (Volatile / Scratch) -->
+      <g transform="translate(585, 0)">
+        <rect x="0" y="0" width="565" height="85" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+        <path d="M 0 8 Q 0 0 8 0 L 557 0 Q 565 0 565 8 L 565 24 L 0 24 Z" fill="url(#grad-cyan)"/>
+        <text x="12" y="16" fill="#ffffff" font-size="11" font-weight="700">CALLER-SAVED (Volátiles / Temporales) — Pueden Sobrescribirse Libremente</text>
+        <text x="12" y="44" fill="#93c5fd" font-family="monospace" font-size="12" font-weight="700">RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11, XMM0–15, YMM0–15</text>
+        <text x="12" y="62" fill="#cbd5e1" font-size="10.5">Uso general: acumuladores, contadores de bucle (<tspan font-family="monospace">rax</tspan>), temporales de cómputo y cálculo de máscaras.</text>
+        <text x="12" y="76" fill="#94a3b8" font-size="10">El kernel puede utilizarlos como registros de trabajo temporal sin necesidad de push/pop a la pila.</text>
+      </g>
+    </g>
+
+    <!-- ================= SUB-PANEL 3: CONCRETE FUNCTION MAPPINGS ================= -->
+    <g transform="translate(24, 345)">
+      <text x="0" y="14" fill="#f8fafc" font-size="13" font-weight="700">3. Mapeo Concreto de Firmas a Registros Físicos</text>
+
+      <!-- Function 1: sum_array -->
+      <g transform="translate(0, 24)">
+        <rect x="0" y="0" width="370" height="110" rx="8" fill="#1a2234" stroke="#0ea5e9" stroke-width="1"/>
+        <rect x="0" y="0" width="370" height="24" rx="8" fill="#0284c7"/>
+        <text x="12" y="16" fill="#ffffff" font-family="monospace" font-size="11" font-weight="700">float sum_array(float *arr, int n)</text>
+        
+        <text x="12" y="42" fill="#cbd5e1" font-size="10.5"><tspan fill="#38bdf8" font-family="monospace" font-weight="700">RDI</tspan> : puntero <tspan font-family="monospace">arr</tspan> (alineado 32B en AVX2)</text>
+        <text x="12" y="58" fill="#cbd5e1" font-size="10.5"><tspan fill="#38bdf8" font-family="monospace" font-weight="700">ESI</tspan> : entero <tspan font-family="monospace">n</tspan> (largo del arreglo)</text>
+        <text x="12" y="74" fill="#cbd5e1" font-size="10.5"><tspan fill="#10b981" font-family="monospace" font-weight="700">XMM0</tspan> : <tspan fill="#34d399" font-weight="700">VALOR DE RETORNO</tspan> (suma escalar)</text>
+        <text x="12" y="94" fill="#94a3b8" font-size="9.5">Preservación: No usa callee-saved (sin prólogo de pila)</text>
+      </g>
+
+      <!-- Function 2: compute_stats -->
+      <g transform="translate(390, 24)">
+        <rect x="0" y="0" width="395" height="110" rx="8" fill="#1a2234" stroke="#f59e0b" stroke-width="1"/>
+        <rect x="0" y="0" width="395" height="24" rx="8" fill="#d97706"/>
+        <text x="12" y="16" fill="#ffffff" font-family="monospace" font-size="10.5" font-weight="700">void compute_stats(arr, n, mean*, var*, min*, max*)</text>
+        
+        <text x="12" y="42" fill="#cbd5e1" font-size="10"><tspan fill="#38bdf8" font-family="monospace" font-weight="700">RDI</tspan>: arr | <tspan fill="#38bdf8" font-family="monospace" font-weight="700">ESI</tspan>: n | <tspan fill="#38bdf8" font-family="monospace" font-weight="700">RDX</tspan>: mean* | <tspan fill="#38bdf8" font-family="monospace" font-weight="700">RCX</tspan>: var*</text>
+        <text x="12" y="58" fill="#cbd5e1" font-size="10"><tspan fill="#38bdf8" font-family="monospace" font-weight="700">R8</tspan>: min* | <tspan fill="#38bdf8" font-family="monospace" font-weight="700">R9</tspan>: max*</text>
+        <text x="12" y="74" fill="#fca5a5" font-size="10"><tspan font-family="monospace" font-weight="700">Callee-saved usados</tspan>: R12 (arr), R13d (n), R14 (mean*),</text>
+        <text x="12" y="88" fill="#fca5a5" font-size="10">R15 (var*), RBX (min*), RBP (max*)</text>
+        <text x="12" y="102" fill="#94a3b8" font-size="9.5">Retorno: void (escritura directa a punteros de memoria)</text>
+      </g>
+
+      <!-- Function 3: normalize_array -->
+      <g transform="translate(805, 24)">
+        <rect x="0" y="0" width="370" height="110" rx="8" fill="#1a2234" stroke="#8b5cf6" stroke-width="1"/>
+        <rect x="0" y="0" width="370" height="24" rx="8" fill="#7c3aed"/>
+        <text x="12" y="16" fill="#ffffff" font-family="monospace" font-size="10.5" font-weight="700">void normalize_array(in, out, n, mean, stddev)</text>
+        
+        <text x="12" y="42" fill="#cbd5e1" font-size="10"><tspan fill="#38bdf8" font-family="monospace" font-weight="700">RDI</tspan>: const float *in | <tspan fill="#38bdf8" font-family="monospace" font-weight="700">RSI</tspan>: float *out</text>
+        <text x="12" y="58" fill="#cbd5e1" font-size="10"><tspan fill="#38bdf8" font-family="monospace" font-weight="700">EDX</tspan>: int n (3º entero recibido en EDX)</text>
+        <text x="12" y="74" fill="#cbd5e1" font-size="10"><tspan fill="#10b981" font-family="monospace" font-weight="700">XMM0</tspan>: float mean | <tspan fill="#10b981" font-family="monospace" font-weight="700">XMM1</tspan>: float stddev</text>
+        <text x="12" y="90" fill="#a78bfa" font-size="10">AVX2: <tspan font-family="monospace">vbroadcastss ymm4, xmm0 / ymm5, xmm1</tspan></text>
+        <text x="12" y="102" fill="#94a3b8" font-size="9.5">Retorno: void (escritura de arreglo normalizado en out)</text>
+      </g>
+    </g>
+  </g>
+</svg>

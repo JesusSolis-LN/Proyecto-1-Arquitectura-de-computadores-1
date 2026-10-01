@@ -2,3 +2,11 @@ obj/
 bin/
 data/*.dat
 data/*.stats.txt
+data/**/*.dat
+data/**/*.stats.txt
+data/benchmarks/
+data/test_suite/
+__pycache__/
+*.pyc
+tools/__pycache__/
+agents/

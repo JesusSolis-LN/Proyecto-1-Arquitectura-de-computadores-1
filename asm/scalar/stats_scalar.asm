@@ -63,27 +63,94 @@ sum_array:
 ;   5) No olvide restaurar los registros callee-saved en el epilogo.
 ; ---------------------------------------------------------------
 compute_stats:
+    ; Prólogo: Preservar registros callee-saved según System V AMD64 ABI
+    push    rbp
     push    rbx
     push    r12
     push    r13
     push    r14
     push    r15
 
-    ; TODO: implementar el algoritmo descrito arriba.
+    ; Verificar caso borde: n <= 0
+    test    esi, esi
+    jle     .stats_zero
 
-    ; --- placeholder temporal: elimine estas lineas al implementar ---
+    ; Asignar argumentos a registros seguros
+    mov     r12, rdi           ; r12  = arr (puntero base)
+    mov     r13d, esi          ; r13d = n
+    mov     r14, rdx           ; r14  = mean*
+    mov     r15, rcx           ; r15  = var*
+    mov     rbx, r8            ; rbx  = min*
+    mov     rbp, r9            ; rbp  = max*
+
+    ; -----------------------------------------------------------
+    ; PASADA 1: Suma, Mínimo y Máximo en un único recorrido
+    ; -----------------------------------------------------------
+    ; Inicializar sum, min y max con el primer elemento arr[0]
+    movss   xmm0, [r12]        ; xmm0 = acumulador de suma
+    movaps  xmm1, xmm0         ; xmm1 = min
+    movaps  xmm2, xmm0         ; xmm2 = max
+    mov     eax, 1             ; eax = i = 1
+
+.pass1_loop:
+    cmp     eax, r13d
+    jge     .pass1_done
+    movss   xmm3, [r12 + rax*4]; xmm3 = arr[i]
+    addss   xmm0, xmm3         ; suma += arr[i]
+    minss   xmm1, xmm3         ; min = min(min, arr[i])
+    maxss   xmm2, xmm3         ; max = max(max, arr[i])
+    inc     eax
+    jmp     .pass1_loop
+
+.pass1_done:
+    ; Calcular mean = sum / n
+    cvtsi2ss xmm4, r13d        ; xmm4 = (float)n
+    movaps  xmm5, xmm0         ; xmm5 = sum
+    divss   xmm5, xmm4         ; xmm5 = mean = sum / n
+
+    ; Guardar min, max y mean en sus respectivas direcciones
+    movss   [rbx], xmm1        ; *min  = min
+    movss   [rbp], xmm2        ; *max  = max
+    movss   [r14], xmm5        ; *mean = mean
+
+    ; -----------------------------------------------------------
+    ; PASADA 2: Varianza poblacional: sum((x - mean)^2) / n
+    ; -----------------------------------------------------------
+    xor     eax, eax           ; eax = i = 0
+    xorps   xmm6, xmm6         ; xmm6 = acumulador de diferencias al cuadrado = 0.0
+
+.pass2_loop:
+    cmp     eax, r13d
+    jge     .pass2_done
+    movss   xmm3, [r12 + rax*4]; xmm3 = arr[i]
+    subss   xmm3, xmm5         ; xmm3 = arr[i] - mean
+    mulss   xmm3, xmm3         ; xmm3 = (arr[i] - mean)^2
+    addss   xmm6, xmm3         ; xmm6 += (arr[i] - mean)^2
+    inc     eax
+    jmp     .pass2_loop
+
+.pass2_done:
+    ; Calcular var = suma_cuadrados / n
+    divss   xmm6, xmm4         ; xmm6 = var = suma_cuadrados / (float)n
+    movss   [r15], xmm6        ; *var  = var
+    jmp     .stats_epilogue
+
+.stats_zero:
+    ; Caso borde n <= 0: escribir 0.0 en todos los punteros
     xorps   xmm0, xmm0
-    movss   [rdx], xmm0
-    movss   [rcx], xmm0
-    movss   [r8], xmm0
-    movss   [r9], xmm0
-    ; --- fin placeholder ---
+    movss   [rdx], xmm0        ; *mean = 0.0
+    movss   [rcx], xmm0        ; *var  = 0.0
+    movss   [r8],  xmm0        ; *min  = 0.0
+    movss   [r9],  xmm0        ; *max  = 0.0
 
+.stats_epilogue:
+    ; Epílogo: Restaurar registros callee-saved en orden inverso
     pop     r15
     pop     r14
     pop     r13
     pop     r12
     pop     rbx
+    pop     rbp
     ret
 
 ; ---------------------------------------------------------------
@@ -94,13 +161,41 @@ compute_stats:
 ;   out[i] = (in[i] - mean) / stddev
 ;   Caso borde: si stddev == 0.0, copie in[i] en out[i] tal cual
 ;   (evite division por cero).
-;
-; TODO (estudiante): implementar el bucle escalar.
-; Sugerencia: guarde mean (xmm0) y stddev (xmm1) en registros que no
-; se sobrescriban dentro del bucle (por ejemplo xmm8/xmm9, que en
-; System V no se usan para pasar argumentos), o vuelva a cargarlos
-; en cada iteracion desde una copia guardada en la pila.
 ; ---------------------------------------------------------------
 normalize_array:
-    ; TODO: implementar
+    ; Si n <= 0, no hay elementos que procesar
+    test    edx, edx
+    jle     .norm_done
+
+    ; Verificar si stddev == 0.0 (evitar división por cero)
+    xorps   xmm2, xmm2         ; xmm2 = 0.0
+    ucomiss xmm1, xmm2         ; comparar stddev con 0.0
+    je      .copy_loop         ; si stddev == 0.0, copiar directamente
+
+    ; Bucle principal de normalización: out[i] = (in[i] - mean) / stddev
+    xor     eax, eax           ; i = 0
+
+.norm_loop:
+    cmp     eax, edx
+    jge     .norm_done
+    movss   xmm3, [rdi + rax*4]; xmm3 = in[i]
+    subss   xmm3, xmm0         ; xmm3 = in[i] - mean
+    divss   xmm3, xmm1         ; xmm3 = (in[i] - mean) / stddev
+    movss   [rsi + rax*4], xmm3; out[i] = xmm3
+    inc     eax
+    jmp     .norm_loop
+
+.copy_loop:
+    ; Caso borde stddev == 0.0: copiar in[i] a out[i] sin modificar
+    xor     eax, eax           ; i = 0
+
+.copy_inner:
+    cmp     eax, edx
+    jge     .norm_done
+    movss   xmm3, [rdi + rax*4]; xmm3 = in[i]
+    movss   [rsi + rax*4], xmm3; out[i] = in[i]
+    inc     eax
+    jmp     .copy_inner
+
+.norm_done:
     ret
