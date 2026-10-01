@@ -1,0 +1,2502 @@
+\documentclass[journal]{IEEEtran}
+
+% *** CITATION PACKAGES ***
+\usepackage[spanish]{babel}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{amsmath,amssymb}
+\usepackage{siunitx}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{url}
+\usepackage{dblfloatfix}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,backgrounds}
+
+\usepackage{caption}
+\captionsetup[figure]{justification=centering}
+
+\raggedbottom
+\setlength{\textfloatsep}{8pt}
+\setlength{\floatsep}{6pt}
+\setlength{\intextsep}{6pt}
+
+% Configuración para fragmentos de código.
+\definecolor{codegray}{rgb}{0.45,0.45,0.45}
+\definecolor{codeblue}{rgb}{0.10,0.20,0.70}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codeblue},
+  commentstyle=\color{codegray},
+  numbers=left,
+  numberstyle=\tiny\color{codegray},
+  stepnumber=1,
+  numbersep=6pt,
+  frame=single,
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=4,
+  captionpos=b,
+  literate=
+    {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+    {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1
+    {ñ}{{\~n}}1 {Ñ}{{\~N}}1 {ü}{{\"u}}1 {Ü}{{\"U}}1
+}
+
+\title{Implementación escalar y vectorial con AVX2}
+\author{Nombre del autor}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este proyecto implementa un normalizador estadístico y extractor de
+descriptores (suma, media, varianza, mínimo, máximo y \textit{z-score}) para
+arreglos \texttt{float32} en x86-64 mediante NASM, enlazado con un controlador
+de evaluación escrito en C. Se compara una implementación escalar, basada en
+instrucciones SSE, con una implementación vectorial optimizada mediante AVX2 y
+registros YMM de 256 bits. La evaluación cuantitativa demuestra aceleraciones
+de hasta $5.80\times$ y reducciones del número de instrucciones de hasta
+$7.19\times$ cuando los datos residen en los niveles de caché L1, L2 o L3. Al
+trabajar desde DRAM, la aceleración converge a $2.44\times$ debido a la
+saturación del ancho de banda de memoria, fenómeno conocido como
+\textit{Memory Wall}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+SIMD, AVX2, x86-64, NASM, System V AMD64 ABI, normalización \textit{z-score},
+speedup, IPC, \textit{Memory Wall}.
+\end{IEEEkeywords}
+
+\section{Introducción y objetivos}
+El cálculo de estadísticos descriptivos y la normalización tipificada,
+definida para cada elemento como
+\begin{equation}
+  z_i = \frac{x_i-\mu}{\sigma},
+  \label{eq:zscore}
+\end{equation}
+constituyen operaciones centrales en el procesamiento de señales, la visión
+artificial y el aprendizaje profundo. Ante el agotamiento del escalado de
+Dennard y los límites térmicos que restringen el aumento de la frecuencia, el
+incremento del rendimiento microarquitectónico depende críticamente del
+paralelismo a nivel de datos (DLP, \textit{Data-Level Parallelism}). La
+vectorización manual mediante extensiones SIMD, en particular AVX2, permite
+procesar múltiples carriles simultáneamente con cada instrucción, reduciendo la
+latencia computacional y la carga sobre el decodificador frente al modelo
+secuencial escalar clásico (SISD).
+
+\subsection{Objetivo general}
+Diseñar, implementar en ensamblador x86-64 mediante NASM y evaluar
+cuantitativamente dos núcleos de cómputo funcionalmente equivalentes: uno
+escalar, basado en SSE, y otro vectorial, basado en AVX2. Ambos se integran con
+un controlador de pruebas en C bajo la convención System V AMD64 ABI para el
+cálculo de descriptores estadísticos y la normalización \textit{z-score} de
+arreglos \texttt{float32}. Además, se analiza su rendimiento, aceleración e IPC
+en relación con la jerarquía de memoria.
+
+\subsection{Objetivos específicos}
+\begin{enumerate}
+  \item[OA1.] Explicar y contrastar el modelo de ejecución SIMD frente a SISD,
+  analizando el procesamiento simultáneo de ocho elementos por registro YMM
+  frente al procesamiento escalar elemento a elemento.
+
+  \item[OA2.] Describir la evolución de las extensiones vectoriales x86
+  (MMX, SSE, AVX, AVX2 y AVX-512) y fundamentar la selección de AVX2 como un
+  compromiso adecuado entre compatibilidad y rendimiento.
+
+  \item[OA3.] Desarrollar núcleos de cómputo en NASM para x86-64 mediante
+  instrucciones empaquetadas, entre ellas \texttt{vmovaps}, \texttt{vaddps},
+  \texttt{vsubps}, \texttt{vmulps}, \texttt{vdivps}, \texttt{vminps} y
+  \texttt{vmaxps}, cumpliendo la convención System V AMD64 ABI.
+
+  \item[OA4.] Aplicar alineación estricta de memoria a 32 bytes mediante
+  \texttt{aligned\_alloc} y resolver el procesamiento del remanente mediante el
+  enmascaramiento bit a bit \texttt{n \& \textasciitilde 7}, seguido de un
+  bucle escalar de cierre (\textit{tail loop}).
+
+  \item[OA5.] Emplear GDB para inspeccionar registros vectoriales con
+  \texttt{print \$ymm0.v8\_float}, punteros y memoria con \texttt{x/8fw}, a fin
+  de validar la corrección matemática y la ausencia de excepciones de protección
+  general (\#GP).
+
+  \item[OA6.] Medir experimentalmente la latencia mediante
+  \texttt{clock\_gettime}, así como el speedup y el IPC mediante
+  \texttt{perf stat}, para tamaños
+  $N\in[10^3,\,2\times10^7]$. Las variaciones del factor de aceleración se
+  correlacionan con la jerarquía de cachés y el cuello de botella de DRAM
+  (\textit{Memory Wall}).
+
+  \item[OA7.] Argumentar las decisiones de diseño de bajo nivel, incluido el
+  árbol de reducción horizontal con \texttt{vextractf128} y la mitigación de
+  las penalizaciones de transición AVX--SSE mediante \texttt{vzeroupper}.
+\end{enumerate}
+
+\subsection{Comparación conceptual entre SIMD y SISD}
+
+La Tabla~\ref{tab:simd-sisd} resume las diferencias principales entre el
+procesamiento escalar y el procesamiento vectorial empleado en este trabajo.
+
+\begin{table*}[!t]
+  \centering
+  \caption{Comparación conceptual entre los modelos escalar SISD y vectorial SIMD.}
+  \label{tab:simd-sisd}
+  \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}
+    >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Criterio & Modelo escalar (SISD) & Modelo vectorial AVX2 (SIMD) \\
+    \midrule
+    Formato del dato & Escalar simple: un elemento \texttt{float32} &
+      Empaquetado: ocho elementos \texttt{float32} \\
+    Registro utilizado & \texttt{xmm0}--\texttt{xmm7}, usando el carril bajo
+      de 32 bits & \texttt{ymm0}--\texttt{ymm5}, usando los 256 bits \\
+    Operaciones por instrucción & Una operación de punto flotante &
+      Ocho operaciones simultáneas por instrucción \\
+    Sobrecarga de control & $N$ iteraciones con saltos y ramas &
+      $\lfloor N/8\rfloor$ iteraciones vectoriales más el remanente escalar \\
+    Presión sobre el decodificador & Alta, debido a la mayor emisión de
+      microoperaciones & Reducida; se observaron hasta $7.19\times$ menos
+      instrucciones \\
+    Reducción de sumas & Inmediata mediante un acumulador secuencial &
+      Árbol horizontal mediante \texttt{vextractf128} y permutaciones \\
+    Alineación de memoria & Estándar, sin requisitos críticos para las cargas
+      escalares & Alineación de 32 bytes para \texttt{vmovaps}, necesaria para
+      evitar excepciones \#GP \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsection{Factor de aceleración teórico}
+
+En una arquitectura SIMD que ejecuta operaciones homogéneas sobre datos
+contiguos, la aceleración ideal está determinada por el cociente entre el ancho
+del registro vectorial, $W_{\mathrm{vector}}$, y el tamaño del dato escalar,
+$W_{\mathrm{dato}}$:
+\begin{equation}
+  S_{\text{teórico}}
+  = \frac{T_{\mathrm{SISD}}}{T_{\mathrm{SIMD}}}
+  = \frac{W_{\mathrm{vector}}}{W_{\mathrm{dato}}}
+  = \frac{256\ \text{bits}}{32\ \text{bits}}
+  = 8.0\times.
+  \label{eq:speedup-teorico}
+\end{equation}
+En este caso, $W_{\mathrm{vector}}=256$ bits corresponde al ancho de un registro
+YMM de AVX2, mientras que $W_{\mathrm{dato}}=32$ bits corresponde al formato
+\texttt{float32} de IEEE~754. Por tanto, una sola instrucción empaquetada AVX2
+puede realizar el equivalente aritmético de ocho instrucciones escalares
+independientes, de modo que idealmente
+\begin{equation}
+  \mathrm{Throughput}_{\mathrm{SIMD}}
+  = 8\,\mathrm{Throughput}_{\mathrm{SISD}}.
+  \label{eq:throughput-teorico}
+\end{equation}
+Este límite supone ausencia de dependencias, sobrecostes de reducción y
+restricciones de memoria; por ello, el speedup observado en la práctica puede
+ser menor.
+
+\section{Entorno de pruebas}
+
+\subsection{Hardware y soporte de AVX2}
+
+La evaluación experimental se realizó sobre un procesador Intel Core
+i3-1215U de 12.\textsuperscript{a} generación, basado en la arquitectura Alder
+Lake y fabricado mediante el nodo Intel~7. Este procesador presenta una
+microarquitectura híbrida asimétrica compuesta por dos núcleos de rendimiento
+(P-cores Golden Cove con soporte para \textit{Hyper-Threading}) y cuatro
+núcleos de eficiencia (E-cores Gracemont sin multihilo), para un total de seis
+núcleos físicos y ocho hilos lógicos.
+
+La jerarquía de memoria dispone de cachés privadas L1 de datos (L1d) de
+\SI{48}{\kibi\byte} por P-core y \SI{32}{\kibi\byte} por E-core. Cada P-core
+cuenta con una caché L2 privada de \SI{1.25}{\mebi\byte}, mientras que el
+clúster de E-cores comparte una caché L2 de \SI{2}{\mebi\byte}. El último nivel
+corresponde a una caché L3 unificada de \SI{10}{\mebi\byte}, denominada Intel
+Smart Cache, con líneas de caché de 64 bytes.
+
+La inspección mediante \texttt{lscpu} y el análisis de
+\texttt{/proc/cpuinfo} confirmaron el soporte nativo de AVX2 sobre registros
+YMM de 256 bits, además de las extensiones FMA3 y SSE4.2. Las características
+principales del sistema se resumen en la Tabla~\ref{tab:hardware}.
+
+\begin{table}[H]
+  \centering
+  \caption{Características del entorno de hardware.}
+  \label{tab:hardware}
+  \begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{0.31\columnwidth}
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Característica & Valor \\
+    \midrule
+    Modelo de CPU & Intel Core i3-1215U (12.\textsuperscript{a} generación,
+      Alder Lake, Intel~7) \\
+    Arquitectura & x86-64 híbrida: 2 P-cores Golden Cove y 4 E-cores
+      Gracemont \\
+    Núcleos/hilos & 6 núcleos físicos (2P + 4E) y 8 hilos lógicos \\
+    Frecuencia base/turbo & P-cores: \SI{1.20}{\giga\hertz}/
+      \SI{4.40}{\giga\hertz}; E-cores: \SI{0.90}{\giga\hertz}/
+      \SI{3.30}{\giga\hertz} \\
+    Caché L1d & \SI{48}{\kibi\byte}/P-core (12 vías),
+      \SI{32}{\kibi\byte}/E-core (8 vías); total:
+      \SI{224}{\kibi\byte} \\
+    Caché L1i & \SI{32}{\kibi\byte}/P-core (8 vías),
+      \SI{64}{\kibi\byte}/E-core (8 vías); total:
+      \SI{320}{\kibi\byte} \\
+    Caché L2 & \SI{1.25}{\mebi\byte}/P-core y \SI{2}{\mebi\byte}
+      compartidos por el clúster de E-cores; total: \SI{4.5}{\mebi\byte} \\
+    Caché L3 (LLC) & \SI{10}{\mebi\byte} unificada y compartida
+      (Intel Smart Cache) \\
+    Línea de caché & 64 bytes \\
+    Flags relevantes & \texttt{avx}, \texttt{avx2}, \texttt{fma},
+      \texttt{sse4\_1}, \texttt{sse4\_2}, \texttt{bmi1}, \texttt{bmi2},
+      \texttt{popcnt} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Herramientas utilizadas}
+
+El desarrollo, la instrumentación y el análisis de los núcleos de cómputo se
+llevaron a cabo mediante el conjunto de herramientas nativo de GNU/Linux
+x86-64. El flujo de trabajo integró el ensamblado de bajo nivel con metadatos
+DWARF, la compilación modular del arnés de pruebas conforme a la convención
+System V AMD64 ABI, la inspección interactiva de registros vectoriales y la
+caracterización microarquitectónica no invasiva mediante la unidad de monitoreo
+de rendimiento de la CPU (PMU, \textit{Performance Monitoring Unit}). La
+Tabla~\ref{tab:herramientas} detalla las versiones y el propósito de cada
+herramienta.
+
+\begin{table*}[!t]
+  \centering
+  \caption{Herramientas utilizadas en el entorno de pruebas.}
+  \label{tab:herramientas}
+  \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.11\textwidth}
+    >{\raggedright\arraybackslash}p{0.13\textwidth}
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Herramienta & Versión & Propósito en el proyecto \\
+    \midrule
+    NASM & 3.01 (compatible con 2.16+) & Ensamblado de las rutinas escalares y
+      vectoriales (\texttt{stats\_scalar.asm} y \texttt{stats\_vector.asm}) en
+      objetos ELF64 con símbolos de depuración DWARF mediante
+      \texttt{-f elf64 -g -F dwarf}. \\
+    GCC & 15.2.0 & Compilación del controlador \texttt{driver.c} con
+      \texttt{-O2 -std=gnu11}, gestión de búferes alineados a 32 bytes mediante
+      \texttt{aligned\_alloc} y enlace final del ejecutable. \\
+    GDB & 17.1 & Depuración de bajo nivel, validación de la alineación de
+      memoria mediante \texttt{addr \% 32 == 0} e inspección de los ocho
+      carriles flotantes de registros YMM con
+      \texttt{\$ymm0.v8\_float}. \\
+    perf & 6.13 & Perfilado mediante los contadores de hardware de la CPU:
+      ciclos de reloj, instrucciones retiradas, IPC, fallos de caché L1d y
+      fallos en la LLC. \\
+    GNU Make & 4.4.1 & Automatización del ciclo de compilación, construcción de
+      los binarios \texttt{norm\_scalar} y \texttt{norm\_vector}, ejecución de
+      las suites de prueba y realización sistemática de benchmarks. \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{Implementación escalar}
+
+\subsection{Descripción del algoritmo}
+
+El procesamiento estadístico escalar se divide en dos rutinas desacopladas,
+\texttt{compute\_stats} y \texttt{normalize\_array}, implementadas íntegramente
+en ensamblador x86-64. La primera calcula los descriptores estadísticos mediante
+dos recorridos del arreglo, mientras que la segunda produce el arreglo
+normalizado a partir de la media y la desviación estándar obtenidas.
+
+\subsubsection{Algoritmo de dos pasadas en \texttt{compute\_stats}}
+
+En la primera pasada se fusionan la reducción de suma y el seguimiento de los
+extremos. Los tres acumuladores se inicializan con el primer elemento:
+\begin{equation}
+  S=x_0, \qquad x_{\min}=x_0, \qquad x_{\max}=x_0.
+  \label{eq:scalar-init}
+\end{equation}
+Luego se recorre el arreglo desde $i=1$ hasta $N-1$, actualizando
+simultáneamente
+\begin{equation}
+  S=\sum_{i=0}^{N-1}x_i, \qquad
+  x_{\min}=\min_i(x_i), \qquad
+  x_{\max}=\max_i(x_i).
+  \label{eq:scalar-pass1}
+\end{equation}
+Al finalizar, $N$ se convierte a punto flotante y se calcula la media
+aritmética:
+\begin{equation}
+  \mu=\frac{S}{N}=\frac{1}{N}\sum_{i=0}^{N-1}x_i.
+  \label{eq:scalar-mean}
+\end{equation}
+La fusión de estas tres operaciones aprovecha las líneas de caché que ya se
+encuentran en L1d y evita recorridos adicionales para obtener el mínimo y el
+máximo.
+
+La segunda pasada calcula la varianza poblacional. Con la media retenida en un
+registro XMM se acumula la suma de desviaciones cuadráticas
+\begin{equation}
+  SS=\sum_{i=0}^{N-1}(x_i-\mu)^2,
+  \label{eq:scalar-ss}
+\end{equation}
+y posteriormente se divide entre $N$:
+\begin{equation}
+  \sigma^2=\frac{SS}{N}
+  =\frac{1}{N}\sum_{i=0}^{N-1}(x_i-\mu)^2.
+  \label{eq:scalar-variance}
+\end{equation}
+Se descartó deliberadamente la expresión de una sola pasada
+\begin{equation}
+  \sigma^2=\frac{1}{N}\sum_{i=0}^{N-1}x_i^2-\mu^2,
+  \label{eq:naive-variance}
+\end{equation}
+porque puede sufrir cancelación catastrófica al restar magnitudes grandes y muy
+próximas. En precisión simple IEEE~754, cuya mantisa efectiva es de 24 bits,
+esta pérdida de significancia puede amplificar el error de redondeo e incluso
+producir varianzas negativas espurias.
+
+\subsubsection{Normalización en \texttt{normalize\_array}}
+
+La rutina recorre el arreglo una vez y aplica la transformación
+\begin{equation}
+  z_i=\frac{x_i-\mu}{\sigma}.
+  \label{eq:scalar-normalization}
+\end{equation}
+Cuando $\sigma=0.0$, todos los elementos presentan dispersión nula. En este
+caso, la rutina copia cada $x_i$ a la salida sin efectuar la división, con lo
+que evita resultados indeterminados, valores NaN o infinitos.
+
+\subsubsection{Complejidad algorítmica}
+
+Ambas rutinas presentan complejidad temporal $O(N)$. En particular,
+\texttt{compute\_stats} realiza dos recorridos, equivalentes a $2N$ iteraciones,
+y \texttt{normalize\_array} realiza un recorrido adicional de $N$ iteraciones.
+La complejidad espacial auxiliar es $O(1)$, pues el cálculo no reserva memoria
+dinámica y mantiene sus acumuladores en registros de la CPU.
+
+\subsection{Decisiones de implementación}
+
+\subsubsection{Uso de registros escalares XMM}
+
+La implementación emplea exclusivamente el carril inferior de 32 bits de los
+registros \texttt{xmm0}--\texttt{xmm6}. Las instrucciones con sufijo
+\texttt{ss} (\textit{Scalar Single-Precision}), como \texttt{addss},
+\texttt{subss}, \texttt{mulss} y \texttt{divss}, procesan un elemento
+\texttt{float32} por instrucción y corresponden al modelo SISD utilizado como
+línea base.
+
+\subsubsection{Convención System V AMD64 ABI}
+
+En \texttt{compute\_stats}, los parámetros se reciben en el orden establecido
+por la ABI: \texttt{rdi} contiene \texttt{arr}, \texttt{rsi} contiene $N$ y
+\texttt{rdx}, \texttt{rcx}, \texttt{r8} y \texttt{r9} contienen los punteros
+de salida para la media, la varianza, el mínimo y el máximo, respectivamente.
+En \texttt{normalize\_array}, \texttt{rdi}, \texttt{rsi} y \texttt{edx}
+contienen los punteros de entrada y salida y la longitud; los argumentos
+flotantes $\mu$ y $\sigma$ se reciben en \texttt{xmm0} y \texttt{xmm1}.
+
+Para conservar los punteros durante las dos pasadas de
+\texttt{compute\_stats}, se trasladan a \texttt{r12}--\texttt{r15},
+\texttt{rbx} y \texttt{rbp}. Estos registros no volátiles
+(\textit{callee-saved}) se guardan mediante \texttt{push} en el prólogo y se
+restauran con \texttt{pop}, en orden inverso, antes del retorno. De esta forma
+se preserva el estado esperado por la función invocadora escrita en C.
+
+\subsubsection{Selección de extremos sin bifurcaciones}
+
+Las instrucciones \texttt{minss} y \texttt{maxss} actualizan los extremos
+directamente en hardware, sin recurrir a \texttt{comiss} ni a saltos
+condicionales como \texttt{ja} o \texttt{jb}. Este enfoque
+\textit{branchless} evita penalizaciones por predicciones de salto incorrectas,
+que en procesadores modernos pueden costar del orden de decenas de ciclos.
+
+\subsubsection{Detección de varianza nula}
+
+Antes de normalizar, \texttt{normalize\_array} construye la constante $0.0$
+mediante \texttt{xorps xmm2, xmm2} y la compara con la desviación estándar
+usando \texttt{ucomiss xmm1, xmm2}. Si $\sigma=0.0$, el control se desvía a
+\texttt{.copy\_loop}; así se evita la división por cero y la generación de NaN
+o $\pm\infty$.
+
+\subsection{Fragmentos de código comentados}
+\begin{lstlisting}[language={[x86masm]Assembler},caption={Bucles principales de \texttt{stats\_scalar.asm}.},label={lst:escalar}]
+; PASADA 1: suma, minimo y maximo
+movss   xmm0, [r12]         ; suma = arr[0]
+movaps  xmm1, xmm0          ; min = arr[0]
+movaps  xmm2, xmm0          ; max = arr[0]
+mov     eax, 1              ; i = 1
+.pass1_loop:
+    cmp     eax, r13d       ; i >= n?
+    jge     .pass1_done
+    movss   xmm3, [r12 + rax*4] ; arr[i]
+    addss   xmm0, xmm3      ; suma += arr[i]
+    minss   xmm1, xmm3      ; min = min(min, arr[i])
+    maxss   xmm2, xmm3      ; max = max(max, arr[i])
+    inc     eax
+    jmp     .pass1_loop
+.pass1_done:
+    cvtsi2ss xmm4, r13d     ; xmm4 = (float)n
+    movaps  xmm5, xmm0
+    divss   xmm5, xmm4      ; mean = suma / n
+    movss   [rbx], xmm1     ; *min = min
+    movss   [rbp], xmm2     ; *max = max
+    movss   [r14], xmm5     ; *mean = mean
+
+; PASADA 2: varianza poblacional
+xor     eax, eax
+xorps   xmm6, xmm6          ; acumulador = 0.0
+.pass2_loop:
+    cmp     eax, r13d
+    jge     .pass2_done
+    movss   xmm3, [r12 + rax*4]
+    subss   xmm3, xmm5      ; arr[i] - mean
+    mulss   xmm3, xmm3      ; (arr[i] - mean)^2
+    addss   xmm6, xmm3
+    inc     eax
+    jmp     .pass2_loop
+.pass2_done:
+    divss   xmm6, xmm4      ; var = SS / n
+    movss   [r15], xmm6     ; *var = var
+
+; NORMALIZACION: z-score o copia si sigma = 0
+; rdi=in, rsi=out, edx=n, xmm0=mean, xmm1=stddev
+test    edx, edx
+jle     .norm_done
+xorps   xmm2, xmm2
+ucomiss xmm1, xmm2
+je      .copy_loop
+xor     eax, eax
+.norm_loop:
+    cmp     eax, edx
+    jge     .norm_done
+    movss   xmm3, [rdi + rax*4]
+    subss   xmm3, xmm0
+    divss   xmm3, xmm1
+    movss   [rsi + rax*4], xmm3
+    inc     eax
+    jmp     .norm_loop
+.copy_loop:
+    xor     eax, eax
+.copy_inner:
+    cmp     eax, edx
+    jge     .norm_done
+    movss   xmm3, [rdi + rax*4]
+    movss   [rsi + rax*4], xmm3
+    inc     eax
+    jmp     .copy_inner
+.norm_done:
+    ret
+\end{lstlisting}
+
+La Tabla~\ref{tab:registros-escalar} resume la asignación de registros en las
+dos rutinas. Para conservarla dentro de una sola columna se utiliza una
+tipografía compacta y descripciones abreviadas.
+
+\begin{table}[H]
+  \centering
+  \caption{Asignación de registros en la implementación escalar.}
+  \label{tab:registros-escalar}
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{0.13\columnwidth}
+    >{\raggedright\arraybackslash}p{0.16\columnwidth}
+    >{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Registro & Tipo & \texttt{compute\_stats} & \texttt{normalize\_array} \\
+    \midrule
+    \texttt{r12}/\texttt{rdi} & Entero 64 b & Base de \texttt{arr} & Base de
+      \texttt{in} \\
+    \texttt{rsi} & Entero 64 b & No usado & Base de \texttt{out} \\
+    \texttt{r13d}/\texttt{edx} & Entero 32 b & Longitud $N$ & Longitud $N$ \\
+    \texttt{eax}/\texttt{rax} & Entero 32/64 b & Índice $i$ & Índice $i$ \\
+    \texttt{xmm0} & Escalar 32 b & Suma $\sum x_i$ & Media $\mu$ \\
+    \texttt{xmm1} & Escalar 32 b & Mínimo & Desviación $\sigma$ \\
+    \texttt{xmm2} & Escalar 32 b & Máximo & Constante $0.0$ \\
+    \texttt{xmm3} & Escalar 32 b & Operando temporal & Operando temporal \\
+    \texttt{xmm4} & Escalar 32 b & $N$ convertido a float & No usado \\
+    \texttt{xmm5} & Escalar 32 b & Media $\mu$ & No usado \\
+    \texttt{xmm6} & Escalar 32 b & $SS$ y varianza $\sigma^2$ & No usado \\
+    \texttt{r14}, \texttt{r15},
+      \texttt{rbx}, \texttt{rbp} & Punteros 64 b & Destinos de media,
+      varianza, mínimo y máximo & No usados \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Evidencia visual pendiente}
+
+Los siguientes espacios quedan reservados para incorporar las capturas sin
+alterar posteriormente la estructura o numeración del informe.
+
+\begin{figure}[H]
+  \centering
+  % Reemplace el recuadro por:
+  % \includegraphics[width=\columnwidth]{figuras/gdb-registros-xmm.png}
+  \fbox{\parbox[c][3.5cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: sesión de GDB inspeccionando los registros
+    \texttt{xmm0}--\texttt{xmm6} y la memoria de salida después de ejecutar
+    \texttt{compute\_stats}.}}
+  \caption{Inspección de registros XMM y memoria de salida mediante GDB.}
+  \label{fig:gdb-escalar-xmm}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  % Reemplace el recuadro por:
+  % \includegraphics[width=\columnwidth]{figuras/salida-norm-scalar-n16.png}
+  \fbox{\parbox[c][3.2cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: salida de \texttt{./bin/norm\_scalar} para el caso
+    $N=16$, con validación de las estadísticas calculadas.}}
+  \caption{Ejecución y validación de la versión escalar para $N=16$.}
+  \label{fig:salida-escalar-n16}
+\end{figure}
+
+\section{Implementación vectorial con AVX2}
+
+\subsection{Elección de AVX2}
+
+El conjunto de instrucciones AVX2 (\textit{Advanced Vector Extensions 2}) se
+seleccionó después de evaluar la capacidad, disponibilidad y coste operativo de
+las principales extensiones SIMD de x86-64.
+
+Frente a SSE, que utiliza registros XMM de 128 bits y procesa cuatro valores
+\texttt{float32} por instrucción, AVX2 duplica el ancho a 256 bits y permite
+operar sobre ocho valores simultáneamente. En consecuencia, el techo ideal
+asociado únicamente al ancho vectorial aumenta de $4.0\times$ a $8.0\times$.
+Además, la codificación tradicional de SSE emplea instrucciones destructivas de
+dos operandos, por ejemplo \texttt{addps dest, src}, mientras que el prefijo VEX
+de AVX2 permite instrucciones no destructivas de tres operandos:
+\begin{equation}
+  \begin{aligned}
+    &\texttt{vaddps dest, src1, src2} \\
+    &\Longrightarrow\quad
+      \texttt{dest}=\texttt{src1}+\texttt{src2}.
+  \end{aligned}
+  \label{eq:vex-three-operands}
+\end{equation}
+Esto preserva las fuentes y reduce la necesidad de copias auxiliares con
+\texttt{movaps}.
+
+AVX-512 elevaría el ancho a 512 bits, equivalente a 16 valores
+\texttt{float32}. Sin embargo, no está disponible de forma homogénea en el
+Intel Core i3-1215U utilizado: sus E-cores Gracemont no incorporan unidades
+AVX-512 y la plataforma mantiene deshabilitada esta extensión para ofrecer un
+repertorio uniforme entre núcleos. En las plataformas que sí la implementan,
+las cargas AVX-512 intensivas también pueden provocar reducciones de frecuencia
+dependientes del procesador y del presupuesto térmico. A esto se añade la
+fragmentación de AVX-512 en subconjuntos como F, CD, BW, DQ y VL. AVX2 ofrece,
+por tanto, una cobertura más amplia y predecible en equipos x86-64 modernos.
+
+La Tabla~\ref{tab:comparacion-simd} resume los criterios de selección. Se
+mantiene dentro de una columna mediante descripciones compactas.
+
+\begin{table}[H]
+  \centering
+  \caption{Comparación de extensiones vectoriales x86.}
+  \label{tab:comparacion-simd}
+  \scriptsize
+  \setlength{\tabcolsep}{2pt}
+  \begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{0.25\columnwidth}
+    >{\centering\arraybackslash}X >{\centering\arraybackslash}X
+    >{\centering\arraybackslash}X@{}}
+    \toprule
+    Criterio & SSE & AVX2 & AVX-512 \\
+    \midrule
+    Registro & 128 b XMM & 256 b YMM & 512 b ZMM \\
+    \texttt{float32}/vector & 4 & 8 & 16 \\
+    Operandos & 2, destructivos & 3, VEX & 3, EVEX y máscara \\
+    Techo ideal & $4\times$ & $8\times$ & $16\times$ \\
+    Compatibilidad & Muy amplia & Amplia & Restringida en consumo \\
+    Efecto térmico & Bajo & Bajo o moderado & Puede ser alto \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+En síntesis, AVX2 constituye el punto de equilibrio para este trabajo: ofrece
+ocho operaciones simultáneas por instrucción, está soportado por todos los
+núcleos del sistema experimental y evita depender de una extensión ausente en
+la plataforma objetivo.
+
+\subsection{Organización del procesamiento vectorial}
+
+Los datos se agrupan en bloques de ocho números IEEE~754 de precisión simple.
+Cada registro YMM se interpreta como ocho carriles independientes:
+\begin{equation}
+  \mathrm{YMM}=
+  [f_0,f_1,f_2,f_3\mid f_4,f_5,f_6,f_7].
+  \label{eq:ymm-lanes}
+\end{equation}
+Los acumuladores principales ocupan \texttt{ymm0}--\texttt{ymm5}. Cada
+iteración consume $8\times4=32$ bytes contiguos; el índice se conserva en
+\texttt{eax}/\texttt{rax} y avanza mediante \texttt{add eax, 8}. El modo de
+direccionamiento SIB convierte el índice de elemento en desplazamiento de bytes
+con expresiones como \texttt{[rdi + rax*4]} o
+\texttt{[r12 + rax*4]}.
+
+Las principales instrucciones VEX utilizadas son las siguientes:
+\begin{itemize}
+  \item \texttt{vmovaps}: carga o almacena ocho valores empaquetados. Las
+  direcciones usadas por esta implementación se mantienen alineadas a 32 bytes,
+  condición necesaria para esta variante alineada.
+  \item \texttt{vaddps}, \texttt{vsubps}, \texttt{vmulps} y
+  \texttt{vdivps}: ejecutan suma, resta, multiplicación y división en los ocho
+  carriles.
+  \item \texttt{vminps} y \texttt{vmaxps}: actualizan en paralelo los ocho
+  mínimos o máximos parciales.
+  \item \texttt{vbroadcastss}: replica el valor escalar del carril inferior de
+  un XMM en los ocho carriles de un YMM, es decir,
+  $[s,s,s,s,s,s,s,s]$.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  % \includegraphics[width=\columnwidth]{figuras/gdb-ymm0-carriles.png}
+  \fbox{\parbox[c][3.1cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: inspección en GDB de los ocho carriles de
+    \texttt{ymm0} mediante \texttt{print \$ymm0.v8\_float} durante el bucle
+    vectorial.}}
+  \caption{Inspección de los carriles de un registro YMM.}
+  \label{fig:gdb-ymm-lanes}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  % \includegraphics[width=\columnwidth]{figuras/gdb-alineacion-32.png}
+  \fbox{\parbox[c][3.1cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: volcado \texttt{x/8fw arr} y comprobación de que la
+    dirección base del arreglo es múltiplo de 32 bytes.}}
+  \caption{Validación en GDB de la alineación del arreglo de entrada.}
+  \label{fig:gdb-alineacion-avx2}
+\end{figure}
+
+\subsection{Reducción horizontal}
+
+Al concluir el bucle vectorial, cada acumulador contiene ocho resultados
+parciales:
+\begin{equation}
+  \mathrm{YMM}=[c_0,c_1,c_2,c_3\mid c_4,c_5,c_6,c_7].
+  \label{eq:partial-lanes}
+\end{equation}
+Para producir un único resultado escalar se aplican árboles de reducción de
+profundidad logarítmica.
+
+\subsubsection{Reducción de suma}
+
+Primero, \texttt{vextractf128} extrae los carriles 4--7. La instrucción
+\texttt{vaddps} combina ambas mitades y deja cuatro sumas parciales:
+\begin{equation}
+  [c_0+c_4,\;c_1+c_5,\;c_2+c_6,\;c_3+c_7].
+  \label{eq:sum-halves}
+\end{equation}
+Dos aplicaciones de \texttt{vhaddps} colapsan primero los pares adyacentes y
+luego las dos sumas restantes, por lo que
+\begin{equation}
+  \texttt{xmm0}[0]=\sum_{i=0}^{7}c_i.
+  \label{eq:horizontal-sum}
+\end{equation}
+
+\subsubsection{Reducción de mínimo y máximo}
+
+x86-64 no proporciona instrucciones \texttt{vhminps} o \texttt{vhmaxps}. La
+reducción se construye mediante \texttt{vextractf128}, operaciones de mínimo o
+máximo y dos permutaciones. La máscara \texttt{0x4E} reorganiza los carriles
+como $[2,3,0,1]$, mientras que \texttt{0xB1} los reorganiza como
+$[1,0,3,2]$. El siguiente fragmento muestra la reducción del mínimo:
+
+\begin{lstlisting}[language={[x86masm]Assembler},caption={Árbol horizontal para reducir el mínimo.},label={lst:reduce-min}]
+vextractf128 xmm3, ymm1, 1
+vminps       xmm1, xmm1, xmm3
+vshufps      xmm3, xmm1, xmm1, 0x4E
+vminps       xmm1, xmm1, xmm3
+vshufps      xmm3, xmm1, xmm1, 0xB1
+vminps       xmm1, xmm1, xmm3
+; xmm1[0] contiene el minimo global
+\end{lstlisting}
+
+La reducción del máximo repite el mismo árbol sobre \texttt{ymm2}/
+\texttt{xmm2}, sustituyendo \texttt{vminps} por \texttt{vmaxps}.
+
+\begin{figure}[H]
+  \centering
+  % \includegraphics[width=\columnwidth]{figuras/gdb-reduccion-minimo.png}
+  \fbox{\parbox[c][3.1cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: contenido de \texttt{xmm1} después de la secuencia
+    \texttt{vshufps}/\texttt{vminps}, mostrando el mínimo en el carril 0.}}
+  \caption{Validación de la reducción horizontal del mínimo.}
+  \label{fig:gdb-reduccion-min}
+\end{figure}
+
+\subsection{Manejo del remanente}
+
+Cuando $N$ no es múltiplo de ocho, una carga vectorial final accedería a
+posiciones ajenas al arreglo y podría atravesar un límite de página. Para
+evitarlo, se calcula primero el número de elementos que forman bloques
+completos:
+\begin{equation}
+  N_{\mathrm{vec}}=N\mathbin{\&}(\mathord{\sim}7)
+  =N-(N\bmod 8).
+  \label{eq:n-vector-limit}
+\end{equation}
+La máscara de 32 bits es
+\begin{equation}
+  \mathord{\sim}7=\texttt{0xFFFFFFF8},
+  \label{eq:tail-mask}
+\end{equation}
+de modo que \texttt{and ecx, \textasciitilde 7} apaga los tres bits menos
+significativos y redondea $N$ hacia abajo al múltiplo de ocho más cercano.
+
+Si $N<8$, entonces $N_{\mathrm{vec}}=0$ y el bucle AVX2 se omite por completo.
+Para $N\bmod8\in\{1,\ldots,7\}$, un bucle escalar de cierre comienza en
+$i=N_{\mathrm{vec}}$ y procesa los elementos restantes con instrucciones VEX
+escalares: \texttt{vmovss}, \texttt{vaddss}, \texttt{vminss},
+\texttt{vmaxss}, \texttt{vsubss}, \texttt{vmulss} y \texttt{vdivss}. Cada
+\texttt{vmovss} lee exactamente cuatro bytes y los resultados se acumulan sobre
+los registros XMM que ya contienen la reducción horizontal.
+
+\begin{figure}[H]
+  \centering
+  % \includegraphics[width=\columnwidth]{figuras/gdb-tail-loop.png}
+  \fbox{\parbox[c][3.1cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: depuración del \textit{tail loop} mostrando el avance
+    elemento a elemento con \texttt{vmovss}.}}
+  \caption{Procesamiento escalar del remanente en GDB.}
+  \label{fig:gdb-tail-loop}
+\end{figure}
+
+\subsection{Fragmentos de código comentados}
+
+Los fragmentos siguientes corresponden a los núcleos de
+\texttt{asm/vector/stats\_vector.asm}.
+
+\begin{lstlisting}[language={[x86masm]Assembler},caption={Primera pasada vectorial y reducción de suma y mínimo.},label={lst:avx2-pass1}]
+.pass1_vec_loop:
+    cmp     eax, ecx
+    jge     .pass1_vec_reduce
+    vmovaps ymm3, [r12 + rax*4]
+    vaddps  ymm0, ymm0, ymm3
+    vminps  ymm1, ymm1, ymm3
+    vmaxps  ymm2, ymm2, ymm3
+    add     eax, 8
+    jmp     .pass1_vec_loop
+
+.pass1_vec_reduce:
+    ; Suma: ymm0 -> xmm0[0]
+    vextractf128 xmm3, ymm0, 1
+    vaddps  xmm0, xmm0, xmm3
+    vhaddps xmm0, xmm0, xmm0
+    vhaddps xmm0, xmm0, xmm0
+
+    ; Minimo: ymm1 -> xmm1[0]
+    vextractf128 xmm3, ymm1, 1
+    vminps  xmm1, xmm1, xmm3
+    vshufps xmm3, xmm1, xmm1, 0x4E
+    vminps  xmm1, xmm1, xmm3
+    vshufps xmm3, xmm1, xmm1, 0xB1
+    vminps  xmm1, xmm1, xmm3
+\end{lstlisting}
+
+\begin{lstlisting}[language={[x86masm]Assembler},caption={Bucle escalar de cierre.},label={lst:avx2-tail}]
+.pass1_tail_loop:
+    cmp     eax, r13d
+    jge     .pass1_done
+    vmovss  xmm3, [r12 + rax*4]
+    vaddss  xmm0, xmm0, xmm3
+    vminss  xmm1, xmm1, xmm3
+    vmaxss  xmm2, xmm2, xmm3
+    inc     eax
+    jmp     .pass1_tail_loop
+\end{lstlisting}
+
+\begin{lstlisting}[language={[x86masm]Assembler},caption={Normalización vectorial con difusión de escalares.},label={lst:avx2-normalize}]
+normalize_array:
+    test    edx, edx
+    jle     .norm_vec_ret
+    vxorps   xmm2, xmm2, xmm2
+    vucomiss xmm1, xmm2
+    je      .norm_copy_loop
+
+    vbroadcastss ymm4, xmm0 ; media
+    vbroadcastss ymm5, xmm1 ; desviacion
+    mov     ecx, edx
+    and     ecx, ~7
+    xor     eax, eax
+.norm_vec_loop:
+    cmp     eax, ecx
+    jge     .norm_scalar_tail
+    vmovaps ymm0, [rdi + rax*4]
+    vsubps  ymm0, ymm0, ymm4
+    vdivps  ymm0, ymm0, ymm5
+    vmovaps [rsi + rax*4], ymm0
+    add     eax, 8
+    jmp     .norm_vec_loop
+\end{lstlisting}
+
+\subsubsection{Uso de \texttt{vzeroupper}}
+
+Después de ejecutar instrucciones AVX de 256 bits, los bits superiores de los
+registros YMM pueden conservar datos activos. En microarquitecturas sensibles a
+la transición entre AVX y SSE heredado, retornar directamente a código que usa
+instrucciones SSE sin prefijo VEX puede introducir una penalización. Por ello,
+todos los caminos de salida ejecutan
+\begin{lstlisting}[language={[x86masm]Assembler},caption={Limpieza del estado superior de los registros YMM.},label={lst:vzeroupper}]
+.norm_vec_done:
+    vzeroupper
+    ret
+\end{lstlisting}
+La instrucción marca como limpios los carriles superiores de los registros YMM
+y evita depender del comportamiento concreto del código C o de las bibliotecas
+invocadas después del retorno.
+
+\begin{figure}[H]
+  \centering
+  % \includegraphics[width=\columnwidth]{figuras/gdb-vzeroupper.png}
+  \fbox{\parbox[c][3.1cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: desensamblado de \texttt{compute\_stats} o
+    \texttt{normalize\_array} mostrando \texttt{vzeroupper} inmediatamente
+    antes de \texttt{ret}.}}
+  \caption{Ubicación de \texttt{vzeroupper} en el epílogo AVX2.}
+  \label{fig:gdb-vzeroupper}
+\end{figure}
+
+\subsection{Asignación de registros vectoriales}
+
+Todos los registros XMM/YMM son volátiles (\textit{caller-saved}) bajo System V
+AMD64 ABI. Por ello, las rutinas pueden utilizarlos sin guardarlos previamente
+en la pila. Para conservar las tablas a media columna, la asignación se divide
+por función.
+
+\begin{table}[H]
+  \centering
+  \caption{Registros de suma y cálculo estadístico AVX2.}
+  \label{tab:registros-avx2-stats}
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{0.18\columnwidth}
+    >{\raggedright\arraybackslash}p{0.29\columnwidth}
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Registro & \texttt{sum\_array} & \texttt{compute\_stats} \\
+    \midrule
+    YMM0/XMM0 & Suma vectorial y retorno escalar & P1: suma; P2: suma de
+      desviaciones cuadráticas \\
+    YMM1/XMM1 & Carga vectorial o elemento del remanente & P1: mínimo; P2:
+      carga y $(x-\mu)^2$ \\
+    YMM2/XMM2 & Mitad alta durante la reducción & P1: máximo \\
+    YMM3/XMM3 & No usado & Carga vectorial, auxiliar de permutación y difusión
+      de $\mu$ \\
+    YMM4/XMM4 & No usado & Divisor $N$ convertido a punto flotante \\
+    YMM5/XMM5 & No usado & Media escalar $\mu=S/N$ \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[H]
+  \centering
+  \caption{Registros de la normalización AVX2.}
+  \label{tab:registros-avx2-normalize}
+  \scriptsize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{0.24\columnwidth}
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Registro & Rol en \texttt{normalize\_array} \\
+    \midrule
+    YMM0/XMM0 & Carga, resta, división y almacenamiento de ocho valores \\
+    YMM1/XMM1 & Argumento escalar $\sigma$ \\
+    YMM2/XMM2 & Comparación $\sigma=0.0$ y temporal del remanente \\
+    YMM3/XMM3 & Temporal escalar del remanente \\
+    YMM4/XMM4 & Difusión $[\mu,\ldots,\mu]$ \\
+    YMM5/XMM5 & Difusión $[\sigma,\ldots,\sigma]$ \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{Casos de prueba}
+
+\subsection{Comandos de reproducibilidad y ejecución}
+
+La compilación desde cero y la verificación funcional automatizada se realizan
+desde el directorio raíz del proyecto mediante los siguientes comandos:
+
+\begin{lstlisting}[language=bash,caption={Compilación y ejecución de la suite completa.},label={lst:run-tests}]
+# Limpiar y compilar las dos versiones
+make clean && make
+
+# Ejecutar la suite funcional completa
+python3 tools/run_all_tests.py
+\end{lstlisting}
+
+Para reproducir manualmente el caso con $N=15$, que combina un bloque AVX2 de
+ocho elementos con siete elementos de remanente, se ejecutan ambos binarios en
+modo detallado y se comparan sus resúmenes estadísticos:
+
+\begin{lstlisting}[language=bash,caption={Ejecución manual del caso con $N=15$.},label={lst:run-n15}]
+# Kernel escalar, modo verbose
+./bin/norm_scalar data/test_suite/tc-05_in.dat data/test_suite/tc-05_sc.dat 1
+
+# Kernel vectorial AVX2, modo verbose
+./bin/norm_vector data/test_suite/tc-05_in.dat data/test_suite/tc-05_vc.dat 1
+
+# Comparar los resumenes estadisticos
+cat data/test_suite/tc-05_sc.dat.stats.txt
+cat data/test_suite/tc-05_vc.dat.stats.txt
+\end{lstlisting}
+
+\subsection{Criterio de validación y tolerancia numérica}
+
+La equivalencia entre las implementaciones en ensamblador y el oráculo de
+referencia escrito en Python se acepta cuando
+\begin{equation}
+  \mathrm{Err}_{\mathrm{rel}}\leq 1.0\times10^{-4}.
+  \label{eq:test-tolerance}
+\end{equation}
+Para un valor producido por ensamblador, $v_{\mathrm{asm}}$, y su referencia,
+$v_{\mathrm{ref}}$, la discrepancia relativa se calcula como
+\begin{equation}
+  \mathrm{Err}_{\mathrm{rel}}=
+  \frac{|v_{\mathrm{asm}}-v_{\mathrm{ref}}|}
+       {|v_{\mathrm{ref}}|+10^{-12}}.
+  \label{eq:relative-error}
+\end{equation}
+El término $10^{-12}$ estabiliza el denominador cuando la referencia es nula o
+muy cercana a cero.
+
+\subsubsection{No asociatividad en IEEE 754}
+
+La suma en punto flotante \texttt{binary32} no satisface, en general, la
+propiedad asociativa:
+\begin{equation}
+  (a+b)+c\neq a+(b+c).
+  \label{eq:non-associativity}
+\end{equation}
+El núcleo escalar acumula los elementos secuencialmente,
+\begin{equation}
+  S_{\mathrm{sc}}=(((x_0+x_1)+x_2)+\cdots+x_{N-1}),
+  \label{eq:scalar-order}
+\end{equation}
+mientras que AVX2 mantiene ocho sumas parciales y las combina mediante un árbol
+horizontal:
+\begin{equation}
+  S_{\mathrm{vec}}=
+  \sum_{j=0}^{7}
+  \left(\sum_{k=0}^{\lfloor N/8\rfloor-1}x_{8k+j}\right)
+  +S_{\mathrm{tail}}.
+  \label{eq:vector-order}
+\end{equation}
+Cada operación intermedia redondea el resultado a la precisión representable.
+Por ello, la reasociación inherente al procesamiento SIMD puede producir
+diferencias del orden de $10^{-7}$ a $10^{-6}$, sin que estas impliquen un
+error algorítmico.
+
+\subsection{Resultados de los casos de prueba}
+
+La Tabla~\ref{tab:pruebas} resume los seis casos borde obligatorios. Debido al
+número de resultados comparados, esta tabla utiliza excepcionalmente el ancho
+de las dos columnas.
+
+\begin{table*}[!t]
+  \centering
+  \caption{Resultados de los casos de prueba.}
+  \label{tab:pruebas}
+  \scriptsize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}p{0.21\textwidth}
+    >{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}Xc@{}}
+    \toprule
+    Caso & Entrada & Referencia & Escalar & AVX2 & Resultado \\
+    \midrule
+    1 & Arreglo vacío, $N=0$; archivo binario sin elementos &
+      Retorno seguro: $\mu=0.0$, $\sigma^2=0.0$ &
+      $\mu=0.0$, $\sigma^2=0.0$ &
+      $\mu=0.0$, $\sigma^2=0.0$ & Pasa \\
+
+    2 & Elemento único, $N=1$; $x_0=42.0$ &
+      $\mu=42.0$, $\sigma^2=0.0$; salida $[42.0]$ &
+      $\mu=42.0$, $\sigma^2=0.0$; salida $[42.0]$ &
+      $\mu=42.0$, $\sigma^2=0.0$; salida $[42.0]$ & Pasa \\
+
+    3 & Remanente puro, $N=7<8$; valores en $[-100,100]$ &
+      $\mu=-0.6737$, $\sigma^2=1547.18$ &
+      $\mu=-0.6737$, $\sigma^2=1547.18$ &
+      $\mu=-0.6737$, $\sigma^2=1547.18$ & Pasa \\
+
+    4 & Vector y remanente, $N=15$; un bloque AVX2 y siete elementos en el
+      \textit{tail} &
+      $\mu=19.4100$, $\sigma^2=2381.27$ &
+      $\mu=19.4100$, $\sigma^2=2381.27$ &
+      $\mu=19.4100$, $\sigma^2=2381.27$ & Pasa \\
+
+    5 & Varianza nula, $N=1000$; $x_i=5.0$ para todo $i$ &
+      $\mu=5.0$, $\sigma^2=0.0$; salida clonada &
+      $\mu=5.0$, $\sigma^2=0.0$; salida clonada &
+      $\mu=5.0$, $\sigma^2=0.0$; salida clonada & Pasa \\
+
+    6 & Valores extremos, $N=70$; rango $[-10^6,10^6]$ con valores del orden
+      de $\pm10^{-4}$ &
+      $\mu=0.0$, $\sigma^2=2.8571\times10^{11}$ &
+      $\mu=0.0$, $\sigma^2=2.8571\times10^{11}$ &
+      $\mu=0.0$, $\sigma^2=2.8571\times10^{11}$ & Pasa \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsection{Análisis técnico de los casos borde}
+
+\begin{enumerate}
+  \item \textbf{Arreglo vacío ($N=0$):} las guardas del controlador y de las
+  rutinas en ensamblador se activan antes de cualquier división o acceso a los
+  punteros. Se retornan estadísticas nulas sin provocar SIGSEGV ni SIGFPE.
+
+  \item \textbf{Elemento único ($N=1$):} la varianza es exactamente cero. La
+  comparación con \texttt{ucomiss}/\texttt{vucomiss} activa la ruta de copia y
+  conserva el elemento original sin dividir por cero.
+
+  \item \textbf{Remanente puro ($N=7$):} como $N<8$, se obtiene
+  $N\mathbin{\&}(\mathord{\sim}7)=0$. El bucle AVX2 se omite y todos los
+  elementos se procesan mediante el \textit{tail loop} escalar.
+
+  \item \textbf{Vector y remanente ($N=15$):} se procesa un bloque de ocho
+  valores en registros YMM y luego los siete valores restantes de forma
+  escalar, comprobando la transición entre ambas rutas.
+
+  \item \textbf{Varianza nula ($N=1000$):} el arreglo constante comprueba que
+  el cálculo produzca $\sigma^2=0.0$ y que la guarda impida ejecutar
+  \texttt{vdivps} con un divisor nulo.
+
+  \item \textbf{Valores extremos ($N=70$):} se mezclan signos y amplitudes
+  desde $10^{-4}$ hasta $10^6$. El caso verifica que no aparezcan
+  desbordamientos ni subdesbordamientos destructivos en los resultados
+  esperados.
+\end{enumerate}
+
+\subsection{Dictamen de correctitud}
+
+Los seis casos evaluados superaron la validación funcional y la comparación
+numérica con el oráculo de Python. El mayor error relativo registrado entre las
+implementaciones fue
+\begin{equation}
+  \mathrm{Err}_{\mathrm{rel,max}}=1.19\times10^{-6}
+  \ll 1.0\times10^{-4}.
+  \label{eq:max-relative-error}
+\end{equation}
+Este resultado se encuentra aproximadamente dos órdenes de magnitud por debajo
+del umbral establecido y respalda la exactitud numérica de ambas versiones para
+los casos considerados.
+
+\begin{figure}[H]
+  \centering
+  % \includegraphics[width=\columnwidth]{figuras/suite-pruebas-pasa.png}
+  \fbox{\parbox[c][3.3cm][c]{0.92\columnwidth}{\centering
+    Captura pendiente: terminal ejecutando
+    \texttt{python3 tools/run\_all\_tests.py} y mostrando los seis casos con
+    resultado PASA.}}
+  \caption{Ejecución automatizada de la suite de pruebas funcionales.}
+  \label{fig:suite-pruebas}
+\end{figure}
+
+\section{Resultados de rendimiento}
+
+\subsection{Metodología de medición}
+
+La instrumentación temporal se realizó mediante la función POSIX
+\texttt{clock\_gettime(CLOCK\_MONOTONIC)}, utilizando marcas de tiempo de alta
+resolución. La región medida incluye exclusivamente el cómputo de los núcleos
+\texttt{sum\_array}, \texttt{compute\_stats} y
+\texttt{normalize\_array}; las operaciones de entrada y salida, como
+\texttt{fread} y \texttt{fwrite}, se excluyeron de la ventana de medición.
+
+Para cada tamaño se ejecutaron $R=30$ repeticiones independientes. Se reportan
+la media muestral $\overline{T}$ y la desviación estándar muestral $s$, lo que
+permite cuantificar la dispersión ocasionada por el sistema operativo, la
+variación de frecuencia y los efectos térmicos. La ejecución se fijó al núcleo
+P0 mediante \texttt{taskset -c 0}, evitando migraciones entre los P-cores Golden
+Cove y los E-cores Gracemont del procesador híbrido.
+
+Se seleccionaron cuatro tamaños para recorrer la jerarquía de memoria. La
+huella indicada considera los arreglos de entrada y salida, ambos en formato
+\texttt{float32}:
+\begin{itemize}
+  \item $N=10^3$: \SI{7.8}{\kibi\byte}, residente en L1d.
+  \item $N=10^5$: \SI{781.2}{\kibi\byte}, residente en L2.
+  \item $N=10^6$: \SI{7.63}{\mebi\byte}, residente en L3.
+  \item $N=2\times10^7$: \SI{152.6}{\mebi\byte}, muy superior a la LLC y,
+  por tanto, atendido principalmente desde DRAM.
+\end{itemize}
+
+\subsection{Tiempos de ejecución}
+
+La aceleración experimental se define como
+\begin{equation}
+  S=\frac{\overline{T}_{\mathrm{sc}}}
+          {\overline{T}_{\mathrm{vec}}},
+  \label{eq:measured-speedup}
+\end{equation}
+y la eficiencia respecto al ancho ideal de ocho carriles como
+\begin{equation}
+  \eta_{\mathrm{SIMD}}\text{ (por ciento)}=\frac{S}{8}\times100.
+  \label{eq:simd-efficiency}
+\end{equation}
+La Tabla~\ref{tab:tiempos} presenta los resultados de las 30 repeticiones. Su
+número de columnas requiere utilizar el ancho completo de la página.
+
+\begin{table*}[!t]
+  \centering
+  \caption{Tiempo promedio, desviación estándar y aceleración por tamaño
+    ($R=30$).}
+  \label{tab:tiempos}
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabularx}{\textwidth}{@{}r>{\raggedright\arraybackslash}Xcccc@{}}
+    \toprule
+    $N$ & Nivel jerárquico y huella &
+      Escalar $\overline{T}\pm s$ (ms) &
+      AVX2 $\overline{T}\pm s$ (ms) & $S$ & $\eta_{\mathrm{SIMD}}$ \\
+    \midrule
+    1,000 & L1d (\SI{7.8}{\kibi\byte}) &
+      $0.0028\pm0.0001$ & $0.0005\pm0.0000$ & $5.80\times$ & 72.5\% \\
+    100,000 & L2 (\SI{781.2}{\kibi\byte}) &
+      $0.2943\pm0.0042$ & $0.0525\pm0.0008$ & $5.60\times$ & 70.0\% \\
+    1,000,000 & L3 (\SI{7.63}{\mebi\byte}) &
+      $2.6637\pm0.0381$ & $0.5433\pm0.0092$ & $4.90\times$ & 61.3\% \\
+    20,000,000 & DRAM (\SI{152.6}{\mebi\byte}) &
+      $54.5323\pm0.8120$ & $22.3774\pm0.3540$ & $2.44\times$ & 30.5\% \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsection{Aceleración obtenida}
+
+El límite ideal para AVX2 sobre \texttt{float32} es $8.0\times$, pues cada
+registro de 256 bits contiene ocho carriles de 32 bits. La curva de la
+Figura~\ref{fig:speedup} muestra dos regímenes. Para
+$N\in[10^3,10^5]$ se observa una meseta de $5.80\times$ a $5.60\times$; al
+alcanzar $N=10^6$, la aceleración disminuye moderadamente a $4.90\times$ dentro
+de la LLC. Cuando la huella rebasa ampliamente la caché, la curva cae y converge
+a $2.44\times$ para $N=2\times10^7$, debido al límite de transferencia desde
+DRAM.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\columnwidth]{docs/speedup_vs_n.png}
+  \caption{Aceleración de la implementación AVX2 respecto de la versión escalar.}
+  \label{fig:speedup}
+\end{figure}
+
+\subsection{Resultados de \texttt{perf stat}}
+
+Los contadores de la Tabla~\ref{tab:perf} se obtuvieron mediante la PMU de
+Linux con afinidad al núcleo P0. Se comparan un problema residente en L3
+($N=10^6$) y otro dominado por accesos a DRAM ($N=2\times10^7$).
+
+\begin{table*}[!t]
+  \centering
+  \caption{Contadores microarquitectónicos obtenidos mediante
+    \texttt{perf stat} en el núcleo P0 Golden Cove.}
+  \label{tab:perf}
+  \scriptsize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}Xrrrr@{}}
+    \toprule
+    Métrica &
+      \multicolumn{1}{c}{$N=10^6$ L3, escalar} &
+      \multicolumn{1}{c}{$N=10^6$ L3, AVX2} &
+      \multicolumn{1}{c}{$N=2\times10^7$ DRAM, escalar} &
+      \multicolumn{1}{c}{$N=2\times10^7$ DRAM, AVX2} \\
+    \midrule
+    Ciclos & 359,663,277 & 78,283,929 & 7,410,341,145 & 3,356,712,357 \\
+    Instrucciones & 916,136,472 & 127,443,561 & 18,313,758,611 & 2,552,451,534 \\
+    IPC & 2.55 & 1.63 & 2.47 & 0.76 \\
+    Referencias de caché & 10,091,746 & 9,981,784 & 200,364,360 & 199,071,098 \\
+    Fallos de caché & 1,918,819 & 915,922 & 140,654,647 & 181,600,111 \\
+    Tasa de fallos & 19.01\% & 9.18\% & 70.20\% & 91.22\% \\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsection{Interpretación de resultados}
+
+\subsubsection{Régimen limitado por cómputo}
+
+Para $N\leq10^6$, los datos permanecen en L1d, L2 o L3 y la aceleración se
+mantiene entre $5.80\times$ y $4.90\times$. En $N=10^6$, AVX2 retira
+127.4 millones de instrucciones frente a 916.1 millones de la versión escalar,
+una reducción de $7.19\times$. El empaquetamiento de ocho valores por
+instrucción descongestiona la etapa de decodificación y el búfer de reordenamiento.
+
+El IPC escalar resulta mayor que el vectorial (2.55 frente a 1.63), pero esta
+métrica cuenta instrucciones, no operaciones útiles por carril. Una instrucción
+AVX2 retirada puede realizar ocho operaciones de punto flotante, por lo que un
+IPC menor no implica menor rendimiento numérico. El tiempo medido confirma que
+la versión vectorial completa el trabajo $4.90\times$ más rápido en L3.
+
+La distancia respecto al límite de $8\times$ se explica por el coste de las
+reducciones horizontales, las conversiones escalares, el control de bucles y
+los prólogos y epílogos de la ABI. Si se modela la aceleración máxima observada
+mediante la ley de Amdahl con una fracción paralelizable $p\approx0.9458$, se
+obtiene
+\begin{equation}
+  S=\frac{1}{(1-p)+p/8}
+   =\frac{1}{0.0542+0.9458/8}
+   \approx5.80\times.
+  \label{eq:amdahl-performance}
+\end{equation}
+Este modelo atribuye aproximadamente un 5.42\% del tiempo a trabajo no
+beneficiado por el ancho vectorial ideal.
+
+\subsubsection{Régimen limitado por memoria}
+
+Para $N=2\times10^7$, los arreglos de entrada y salida ocupan en conjunto
+\SI{152.6}{\mebi\byte}, más de quince veces la capacidad de la caché L3 de
+\SI{10}{\mebi\byte}. La CPU debe solicitar repetidamente líneas de 64 bytes a
+la memoria principal. Aunque las unidades AVX2 consumen 32 bytes por carga, la
+tasa de cómputo deja de ser el factor dominante y el rendimiento queda limitado
+por el ancho de banda y la latencia de DRAM.
+
+La tasa de fallos medida para AVX2 pasa de 9.18\% en L3 a 91.22\% en el caso de
+DRAM, mientras que su IPC cae de 1.63 a 0.76. Las instrucciones vectoriales
+continúan reduciendo el número total de instrucciones en aproximadamente
+$7.17\times$, pero gran parte de los ciclos se consume esperando datos. Esta
+\textit{Memory Wall} limita el speedup temporal a $2.44\times$, demostrando que
+el paralelismo aritmético no puede compensar por sí solo una alimentación de
+datos insuficiente.
+
+\section{Evidencia de la sesión de GDB}
+
+\subsection{Propósito técnico y microarquitectónico}
+
+La sesión de depuración con GNU GDB auditó en tiempo de ejecución el
+cumplimiento de la convención System V AMD64 ABI y contrastó el datapath escalar
+SISD con el datapath SIMD AVX2. En particular, se verificó el procesamiento de
+un único \texttt{float32} en el carril inferior de \texttt{xmm3}, frente al
+procesamiento simultáneo de ocho valores en \texttt{ymm0}. También se comprobó
+la alineación a 32 bytes requerida por \texttt{vmovaps} y la igualdad de los
+resultados almacenados por ambas implementaciones para el caso $N=16$
+(\texttt{tc-06\_in.dat}).
+
+\subsection{Secuencia de comandos y breakpoints}
+
+\subsubsection{Kernel escalar}
+
+La sesión de \texttt{bin/norm\_scalar} se configuró con una repetición para
+aislar el flujo de control. El primer breakpoint se ubicó en la entrada de
+\texttt{normalize\_array}, sobre \texttt{test edx, edx}, para comprobar los
+argumentos \texttt{rdi=in}, \texttt{rsi=out} y \texttt{edx=16}. También se
+inspeccionaron $\mu=-5.637640$ en \texttt{xmm0} y
+$\sigma=48.620003$ en \texttt{xmm1}.
+
+El segundo breakpoint se colocó inmediatamente después de
+\texttt{divss xmm3, xmm1}, dentro de \texttt{.norm\_loop}. Allí se confirmó que
+solo el carril inferior de \texttt{xmm3} contenía el resultado de la iteración
+actual y que \texttt{eax} avanzaba de uno en uno, equivalente a cuatro bytes
+por elemento. Finalmente, se eliminó el breakpoint iterativo y se utilizó
+\texttt{finish} antes de inspeccionar la memoria de salida.
+
+\begin{lstlisting}[caption={Comandos principales de la sesión GDB escalar.},label={lst:gdb-scalar}]
+(gdb) file bin/norm_scalar
+(gdb) set args data/test_suite/tc-06_in.dat data/test_suite/tc-06_sc_out.dat 1
+(gdb) break asm/scalar/stats_scalar.asm:167
+(gdb) run
+(gdb) print $rdi
+(gdb) print $rsi
+(gdb) print $edx
+$edx = 16
+(gdb) print $xmm0.v4_float
+# carril 0: mean = -5.637640
+(gdb) print $xmm1.v4_float
+# carril 0: stddev = 48.620003
+(gdb) break asm/scalar/stats_scalar.asm:184
+(gdb) continue
+(gdb) print $eax
+$eax = 0
+(gdb) print $xmm3.v4_float
+# un resultado activo en el carril 0
+(gdb) delete 2
+(gdb) finish
+(gdb) print (void*)out
+(gdb) x/8fw out
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \IfFileExists{prism-uploads/CAPTURA ESCALAR 1.png}
+    {\includegraphics[width=\columnwidth]{prism-uploads/CAPTURA ESCALAR 1.png}}
+    {\fbox{\parbox[c][3.0cm][c]{0.92\columnwidth}{\centering
+      Captura escalar 1 pendiente: argumentos y valores de
+      \texttt{xmm0}/\texttt{xmm1} al entrar en \texttt{normalize\_array}.}}}
+  \caption{Recepción de argumentos y parámetros flotantes en el kernel escalar.}
+  \label{fig:gdb-escalar-1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \IfFileExists{prism-uploads/CAPTURA ESCALAR 2.png}
+    {\includegraphics[width=\columnwidth]{prism-uploads/CAPTURA ESCALAR 2.png}}
+    {\fbox{\parbox[c][3.0cm][c]{0.92\columnwidth}{\centering
+      Captura escalar 2 pendiente: \texttt{xmm3} después de
+      \texttt{divss}, con un único carril activo y \texttt{eax=0}.}}}
+  \caption{Procesamiento SISD de un elemento \texttt{float32}.}
+  \label{fig:gdb-escalar-2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \IfFileExists{prism-uploads/CAPTURA ESCALAR 3.png}
+    {\includegraphics[width=\columnwidth]{prism-uploads/CAPTURA ESCALAR 3.png}}
+    {\fbox{\parbox[c][3.0cm][c]{0.92\columnwidth}{\centering
+      Captura escalar 3 pendiente: volcado \texttt{x/8fw out} después de
+      retornar al controlador.}}}
+  \caption{Memoria de salida producida por la versión escalar.}
+  \label{fig:gdb-escalar-3}
+\end{figure}
+
+\subsubsection{Kernel vectorial}
+
+La sesión de \texttt{bin/norm\_vector} utilizó el mismo arreglo y una única
+repetición. El breakpoint de entrada, situado sobre \texttt{test edx, edx},
+permitió validar los argumentos antes de que \texttt{vbroadcastss} replicara
+$\mu$ y $\sigma$ en \texttt{ymm4} y \texttt{ymm5}. El segundo breakpoint se
+ubicó después de \texttt{vdivps ymm0, ymm0, ymm5}; en ese punto,
+\texttt{ymm0} contenía ocho resultados normalizados y \texttt{eax} avanzaba en
+bloques de ocho elementos, equivalentes a 32 bytes.
+
+La expresión \texttt{((unsigned long)out) \% 32} produjo cero, confirmando que
+el búfer de salida satisface la alineación exigida por las cargas y
+almacenamientos con \texttt{vmovaps}. Tras eliminar el breakpoint del bucle,
+\texttt{finish} permitió inspeccionar el mismo intervalo de memoria que en la
+versión escalar.
+
+\begin{lstlisting}[caption={Comandos principales de la sesión GDB vectorial.},label={lst:gdb-vector}]
+(gdb) file bin/norm_vector
+(gdb) set args data/test_suite/tc-06_in.dat data/test_suite/tc-06_vc_out.dat 1
+(gdb) break asm/vector/stats_vector.asm:248
+(gdb) run
+(gdb) print $edx
+$edx = 16
+(gdb) print $xmm0.v4_float
+# mean = -5.637640
+(gdb) print $xmm1.v4_float
+# stddev = 48.620003
+(gdb) break asm/vector/stats_vector.asm:271
+(gdb) continue
+(gdb) print $eax
+$eax = 0
+(gdb) print $ymm0.v8_float
+# ocho resultados normalizados simultaneos
+(gdb) print ((unsigned long)out) % 32
+$ = 0
+(gdb) delete 2
+(gdb) finish
+(gdb) x/8fw out
+\end{lstlisting}
+
+\begin{figure}[H]
+  \centering
+  \IfFileExists{prism-uploads/CAPTURA VECTORIAL 1.png}
+    {\includegraphics[width=\columnwidth]{prism-uploads/CAPTURA VECTORIAL 1.png}}
+    {\fbox{\parbox[c][3.0cm][c]{0.92\columnwidth}{\centering
+      Captura vectorial 1 pendiente: argumentos de
+      \texttt{normalize\_array} antes de los broadcasts.}}}
+  \caption{Argumentos de entrada de la rutina vectorial.}
+  \label{fig:gdb-vectorial-1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \IfFileExists{prism-uploads/CAPTURA VECTORIAL 2.png}
+    {\includegraphics[width=\columnwidth]{prism-uploads/CAPTURA VECTORIAL 2.png}}
+    {\fbox{\parbox[c][3.0cm][c]{0.92\columnwidth}{\centering
+      Captura vectorial 2 pendiente: ocho carriles de \texttt{ymm0} después de
+      \texttt{vdivps}.}}}
+  \caption{Procesamiento SIMD de ocho elementos \texttt{float32}.}
+  \label{fig:gdb-vectorial-2}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \IfFileExists{prism-uploads/CAPTURA VECTORIAL 3.png}
+    {\includegraphics[width=\columnwidth]{prism-uploads/CAPTURA VECTORIAL 3.png}}
+    {\fbox{\parbox[c][3.0cm][c]{0.92\columnwidth}{\centering
+      Captura vectorial 3 pendiente: alineación módulo 32 y volcado
+      \texttt{x/8fw out}.}}}
+  \caption{Alineación y memoria de salida de la versión AVX2.}
+  \label{fig:gdb-vectorial-3}
+\end{figure}
+
+\subsection{Comparación de hallazgos en bajo nivel}
+
+La Tabla~\ref{tab:gdb-comparison} conserva el ancho de una columna y resume las
+diferencias observadas directamente en GDB.
+
+\begin{table}[H]
+  \centering
+  \caption{Hallazgos de la inspección escalar y vectorial.}
+  \label{tab:gdb-comparison}
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}p{0.25\columnwidth}
+    >{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    Dimensión & Escalar & AVX2 \\
+    \midrule
+    Paradigma & SISD, SSE escalar & SIMD empaquetado \\
+    Registro & \texttt{xmm3}, carril 0 & \texttt{ymm0}, ocho carriles \\
+    Elementos/iteración & 1 & 8 \\
+    Paso del índice & $+1$ elemento ($+4$ B) & $+8$ elementos ($+32$ B) \\
+    Aritmética & \texttt{subss}, \texttt{divss} & \texttt{vsubps},
+      \texttt{vdivps} \\
+    Acceso & \texttt{movss}, 32 bits & \texttt{vmovaps}, 256 bits alineados \\
+    Parámetros & $\mu$ y $\sigma$ en XMM & Broadcast a \texttt{ymm4} y
+      \texttt{ymm5} \\
+    Iteraciones ($N=16$) & 16 & 2 \\
+    Alineación & 4 bytes suficiente & 32 bytes en esta implementación \\
+    Salida inicial & $[0.899751,1.823481,\ldots]$ &
+      $[0.899751,1.823481,\ldots]$ \\
+    Epílogo & Sin limpieza AVX & \texttt{vzeroupper} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+La observación confirma una reducción del 87.5\% en el número de iteraciones
+para $N=16$. AVX2 ocupa los ocho carriles de un registro YMM y reduce la
+sobrecarga de control, mientras que la versión escalar utiliza únicamente un
+valor de 32 bits por instrucción. La alineación a 32 bytes evita accesos
+desalineados con \texttt{vmovaps}; \texttt{vzeroupper}, por su parte, prepara el
+retorno a código que pueda utilizar SSE heredado.
+
+\subsection{Convergencia numérica observada}
+
+La inspección \texttt{x/8fw out} produjo en ambos ejecutables el mismo bloque
+inicial:
+\begin{equation}
+\begin{aligned}
+  \mathrm{out}[0\ldots7]=[&0.899751365,\;1.823480730,\\
+  &-0.0602805801,\;-0.851318777,\\
+  &-1.114069460,\;-1.663971660,\\
+  &0.220615491,\;0.604119360].
+\end{aligned}
+\label{eq:gdb-output-values}
+\end{equation}
+Para estos ocho elementos, la diferencia máxima observada fue
+\begin{equation}
+  \max_{0\leq i<8}
+  \left|\mathrm{out}_{\mathrm{sc}}[i]
+  -\mathrm{out}_{\mathrm{vec}}[i]\right|=0.0,
+  \label{eq:gdb-max-difference}
+\end{equation}
+valor inferior a la epsilon de máquina de \texttt{float32},
+$\varepsilon\approx1.19\times10^{-7}$. La evidencia confirma la coincidencia
+exacta del bloque inspeccionado, además de la equivalencia numérica global
+establecida por la suite de pruebas.
+
+\section{Conclusiones, limitaciones y trabajo futuro}
+
+\subsection{Conclusiones}
+
+La vectorización mediante AVX2 de 256 bits demostró la eficacia del paralelismo
+a nivel de datos para el cálculo de estadísticos y la normalización de arreglos
+\texttt{float32}. La implementación alcanzó un speedup máximo de
+$5.80\times$, equivalente al 72.5\% del límite ideal de $8.0\times$, y redujo
+en $7.19\times$ el número de instrucciones retiradas en el caso residente en
+L3. Esta mejora se obtuvo sin comprometer la exactitud: el error relativo máximo
+de la suite fue $1.19\times10^{-6}$, muy inferior a la tolerancia establecida de
+$1.0\times10^{-4}$.
+
+Los resultados también evidencian la transición entre dos regímenes de
+ejecución. Mientras los datos permanecen en la jerarquía de cachés, para
+$N\leq10^6$, la aplicación se encuentra principalmente limitada por cómputo y
+alcanza aceleraciones entre $5.80\times$ y $4.90\times$. Al utilizar
+$N=2\times10^7$, cuya huella combinada es de \SI{152.6}{\mebi\byte}, el
+problema pasa a estar limitado por memoria. La tasa de fallos de caché de la
+versión AVX2 alcanza 91.22\% y el speedup desciende a $2.44\times$, confirmando
+el efecto de la \textit{Memory Wall}.
+
+La ley de Amdahl explica la distancia restante respecto al factor ideal de
+ocho. Las reducciones horizontales con \texttt{vextractf128} y
+\texttt{vhaddps}, las conversiones escalares, el control de los bucles y el
+procesamiento del remanente cuando $N\bmod8\neq0$ constituyen una fracción que
+no obtiene el beneficio completo del ancho SIMD. Este coste fijo tiene un peso
+relativo mayor en arreglos pequeños.
+
+Finalmente, la implementación mostró robustez en el nivel de arquitectura y de
+interfaz binaria. El cumplimiento de System V AMD64 ABI permitió integrar los
+núcleos NASM con el controlador en C; la asignación alineada a 32 bytes evitó
+accesos inválidos con \texttt{vmovaps}; y \texttt{vzeroupper} dejó limpios los
+carriles superiores antes de retornar a código potencialmente basado en SSE.
+La inspección con GDB confirmó tanto la alineación como la equivalencia de las
+salidas escalares y vectoriales.
+
+\subsection{Limitaciones observadas}
+
+La limitación dominante para arreglos que exceden la LLC es el ancho de banda
+de DRAM. En este régimen, la capacidad de las unidades vectoriales para consumir
+y procesar datos supera la tasa con la que la memoria principal puede entregar
+líneas de caché. En consecuencia, las unidades SIMD permanecen parcialmente
+inactivas mientras el pipeline espera datos, por lo que aumentar únicamente el
+ancho vectorial no produce una aceleración proporcional.
+
+La implementación también es estrictamente monohilo y utiliza un solo núcleo
+físico. Por ello, no aprovecha el paralelismo a nivel de hilos ni los restantes
+P-cores y E-cores del procesador. Los resultados caracterizan el beneficio de
+SIMD dentro de un núcleo, pero no representan el rendimiento máximo agregado de
+la plataforma completa.
+
+Adicionalmente, las sumas se realizan en precisión simple y su orden cambia
+entre la versión escalar y la vectorial. Aunque las diferencias permanecieron
+dentro de la tolerancia definida, aplicaciones con requisitos numéricos más
+estrictos podrían necesitar acumuladores de doble precisión o algoritmos de
+suma compensada.
+
+\subsection{Trabajo futuro}
+
+Una primera extensión consiste en emplear FMA3 durante la acumulación de la
+varianza. Después de calcular $d_i=x_i-\mu$, una instrucción como
+\texttt{vfmadd231ps} puede evaluar y acumular $d_i^2$ en una única operación
+fusionada. Esto reduce el número de instrucciones y evita el redondeo intermedio
+separado entre la multiplicación y la suma.
+
+También se propone desenrollar los bucles vectoriales por factores de dos o
+cuatro y mantener varios acumuladores YMM independientes. Esta organización
+reduce las dependencias RAW de las cadenas de suma y ofrece al planificador
+fuera de orden más operaciones independientes para utilizar los puertos de
+ejecución disponibles.
+
+Para arreglos mucho mayores que la LLC, podría evaluarse el uso de
+almacenamientos no temporales mediante \texttt{vmovntps}. Si la salida no será
+reutilizada inmediatamente, estas escrituras pueden disminuir el tráfico de
+\textit{write-allocate} y reducir la contaminación de las cachés. Su beneficio
+debe medirse experimentalmente, pues depende del tamaño, la alineación y el
+patrón de reutilización.
+
+Por último, una implementación híbrida SIMD+OpenMP permitiría dividir el arreglo
+entre varios hilos y combinar el paralelismo AVX2 dentro de cada núcleo con
+paralelismo a nivel de hilos. Esta alternativa deberá considerar la topología
+híbrida del procesador, la afinidad de los hilos y la saturación compartida del
+ancho de banda de memoria, que probablemente se convierta nuevamente en el
+límite para tamaños grandes.
+
+\clearpage
+\appendices
+\onecolumn
+\section{Diagramas de arquitectura}
+
+La Figura~\ref{fig:arquitectura-software-hardware} resume el flujo jerárquico
+del sistema, desde la orquestación en C hasta la ejecución de los kernels
+escalares y vectoriales en los registros del procesador.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.92\textwidth}{!}{%
+  \begin{tikzpicture}[
+    font=\sffamily,
+    flow/.style={-{Latex[length=3mm,width=2mm]},thick,draw=black!65},
+    mainnode/.style={
+      rectangle,rounded corners=2pt,draw=blue!65!black,fill=blue!8,
+      thick,align=center,minimum height=9mm,text width=47mm
+    },
+    cnode/.style={
+      rectangle,rounded corners=2pt,draw=blue!55!black,fill=blue!4,
+      align=center,minimum height=10mm,text width=42mm
+    },
+    inode/.style={
+      rectangle,rounded corners=2pt,draw=teal!65!black,fill=teal!7,
+      align=center,minimum height=12mm,text width=50mm
+    },
+    abinode/.style={
+      rectangle,rounded corners=2pt,draw=orange!75!black,fill=orange!9,
+      align=center,minimum height=14mm,text width=74mm
+    },
+    scalar/.style={
+      rectangle,rounded corners=2pt,draw=violet!70!black,fill=violet!8,
+      align=center,minimum height=13mm,text width=73mm
+    },
+    vector/.style={
+      rectangle,rounded corners=2pt,draw=green!50!black,fill=green!9,
+      align=center,minimum height=13mm,text width=73mm
+    },
+    group/.style={
+      rectangle,rounded corners=4pt,thick,inner sep=6mm
+    },
+    grouptitle/.style={font=\bfseries\sffamily,align=center}
+  ]
+
+  % Capa de orquestación en C.
+  \node[mainnode] (cmain) {\textbf{\texttt{main()}}\\Orquestador del benchmark};
+  \node[cnode,below left=10mm and 15mm of cmain] (calloc)
+    {\texttt{aligned\_alloc}\\\texttt{(32, size)}\\Reserva alineada en el heap};
+  \node[cnode,below=10mm of cmain] (cbench)
+    {\texttt{clock\_gettime}\\Telemetría temporal};
+  \node[cnode,below right=10mm and 15mm of cmain] (cmath)
+    {\texttt{sqrtf(var)}\\$\sigma=\sqrt{\mathrm{var}}$};
+  \draw[flow] (cmain) -- (calloc);
+  \draw[flow] (cmain) -- (cbench);
+  \draw[flow] (cmain) -- (cmath);
+
+  % Interfaz pública.
+  \node[inode,below=27mm of calloc] (hsum)
+    {\texttt{sum\_array(const float *arr, int n)}};
+  \node[inode,below=27mm of cbench] (hstats)
+    {\texttt{compute\_stats(...)}\\Media, varianza, mínimo y máximo};
+  \node[inode,below=27mm of cmath] (hnorm)
+    {\texttt{normalize\_array(...)}\\Normalización \textit{z-score}};
+
+  % Contrato System V AMD64 ABI.
+  \node[abinode,below left=27mm and 5mm of hstats] (abigpr)
+    {\textbf{Punteros y enteros en GPR}\\
+     1: RDI $\mid$ 2: RSI $\mid$ 3: RDX $\mid$ 4: RCX $\mid$ 5: R8 $\mid$ 6: R9};
+  \node[abinode,below right=27mm and 5mm of hstats] (abixmm)
+    {\textbf{Flotantes escalares y retorno}\\
+     1.er float: XMM0 $\mid$ 2.º float: XMM1 $\mid$ retorno: XMM0};
+  \node[abinode,below=9mm of abigpr] (abipreserve)
+    {\textbf{Registros no volátiles}\\
+     RBX, RBP y R12--R15 preservados con \texttt{push}/\texttt{pop};
+     pila alineada a 16 bytes};
+  \node[abinode,below=9mm of abixmm] (abiclean)
+    {\textbf{Higiene del estado AVX}\\
+     \texttt{vzeroupper} antes de \texttt{ret} para evitar transiciones
+     AVX--SSE costosas};
+
+  % Backends escalares y vectoriales.
+  \node[scalar,below=31mm of abipreserve] (ssum)
+    {\texttt{sum\_array}\\SISD secuencial: \texttt{addss}, un float/iteración};
+  \node[scalar,below=7mm of ssum] (sstats)
+    {\texttt{compute\_stats}\\Dos pasadas: \texttt{minss}, \texttt{maxss},
+     \texttt{divss}};
+  \node[scalar,below=7mm of sstats] (snorm)
+    {\texttt{normalize\_array}\\Traslación y escalado elemento a elemento};
+
+  \node[vector,below=31mm of abiclean] (vsum)
+    {\texttt{sum\_array}\\\texttt{vmovaps}/\texttt{vaddps}, ocho floats/iteración\\
+     Reducción horizontal, \textit{tail loop} y \texttt{vzeroupper}};
+  \node[vector,below=7mm of vsum] (vstats)
+    {\texttt{compute\_stats}\\Dos pasadas AVX2 con \texttt{vminps} y
+     \texttt{vmaxps}\\Árbol de reducción, \textit{tail loop} y \texttt{vzeroupper}};
+  \node[vector,below=7mm of vstats] (vnorm)
+    {\texttt{normalize\_array}\\Broadcast de $\mu$ y $\sigma$;
+     \texttt{vsubps}/\texttt{vdivps}\\\textit{Tail loop} y
+     \texttt{vzeroupper}};
+
+  % Contenedores de las capas, dibujados detrás de los nodos.
+  \begin{scope}[on background layer]
+    \node[group,draw=blue!65!black,fill=blue!2,
+      fit=(cmain)(calloc)(cbench)(cmath),
+      label={[grouptitle,blue!65!black]above:
+        Capa de orquestación en C: \texttt{src/driver.c}}] (cgroup) {};
+
+    \node[group,draw=teal!65!black,fill=teal!2,
+      fit=(hsum)(hstats)(hnorm),
+      label={[grouptitle,teal!65!black]above:
+        Interfaz y contrato de software: \texttt{include/stats.h}}] (igroup) {};
+
+    \node[group,draw=orange!75!black,fill=orange!3,
+      fit=(abigpr)(abixmm)(abipreserve)(abiclean),
+      label={[grouptitle,orange!75!black]above:
+        Protocolo de hardware: System V AMD64 ABI}] (abigroup) {};
+
+    \node[group,draw=violet!70!black,fill=violet!2,
+      fit=(ssum)(sstats)(snorm),
+      label={[grouptitle,violet!70!black]above:
+        Backend escalar: \texttt{asm/scalar/stats\_scalar.asm}}] (sgroup) {};
+
+    \node[group,draw=green!50!black,fill=green!3,
+      fit=(vsum)(vstats)(vnorm),
+      label={[grouptitle,green!50!black]above:
+        Backend AVX2: \texttt{asm/vector/stats\_vector.asm}}] (vgroup) {};
+
+    \node[group,draw=black!60,fill=black!1,inner sep=10mm,
+      fit=(sgroup)(vgroup),
+      label={[grouptitle]above:Kernels en ensamblador NASM x86-64}] (kgroup) {};
+  \end{scope}
+
+  % Flujo jerárquico entre capas.
+  \draw[flow] (cgroup.south) -- (igroup.north);
+  \draw[flow] (igroup.south) -- (abigroup.north);
+  \draw[flow] (abigroup.south) -- ++(0,-7mm) -| (sgroup.north);
+  \draw[flow] (abigroup.south) -- ++(0,-7mm) -| (vgroup.north);
+
+  \end{tikzpicture}%
+  }
+  \caption{Flujo jerárquico desde la capa de orquestación en C hasta los
+    backends escalar y AVX2 ejecutados por el hardware.}
+  \label{fig:arquitectura-software-hardware}
+\end{figure}
+
+\clearpage
+\subsection{Bucle escalar SISD paso a paso}
+
+El kernel escalar recorre el arreglo de manera estrictamente secuencial. Cada
+iteración carga un único valor \texttt{float32}, lo acumula en el carril
+inferior de \texttt{xmm0} y avanza el índice una posición. Al no existir
+particionamiento vectorial, la rutina no necesita calcular un límite por bloques
+ni realizar una reducción horizontal al finalizar.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.82\textwidth}{!}{%
+  \begin{tikzpicture}[
+    font=\sffamily,
+    node distance=10mm,
+    flow/.style={-{Latex[length=3mm,width=2mm]},thick,draw=black!70},
+    terminal/.style={
+      ellipse,draw=blue!65!black,fill=blue!8,thick,
+      align=center,minimum height=12mm,text width=62mm
+    },
+    process/.style={
+      rectangle,rounded corners=2pt,draw=teal!65!black,fill=teal!7,
+      thick,align=center,minimum height=14mm,text width=74mm
+    },
+    decision/.style={
+      diamond,aspect=2.1,draw=orange!75!black,fill=orange!10,
+      thick,align=center,inner sep=1.5mm,text width=36mm
+    },
+    branch/.style={font=\bfseries\small,fill=white,inner sep=1pt}
+  ]
+
+  \node[terminal] (start)
+    {\textbf{Inicio de \texttt{sum\_array} escalar (SISD)}\\
+     \texttt{rdi = arr}, \texttt{esi = n}};
+
+  \node[process,below=of start] (init)
+    {\textbf{Inicializar registros}\\
+     \texttt{eax = 0} \quad ($i=0$)\\
+     \texttt{xorps xmm0, xmm0} \quad ($\mathrm{sum}=0.0f$)};
+
+  \node[decision,below=12mm of init] (cond)
+    {$i<n$?\\\texttt{cmp eax, esi}\\\texttt{jl}};
+
+  \node[process,below=13mm of cond] (load)
+    {\textbf{Cargar un valor \texttt{float32}}\\
+     \texttt{movss xmm1, [rdi + rax*4]}};
+
+  \node[process,below=of load] (arith)
+    {\textbf{Acumular la suma escalar}\\
+     \texttt{addss xmm0, xmm1}};
+
+  \node[process,below=of arith] (inc)
+    {\textbf{Avanzar el índice}\\
+     \texttt{inc eax} \quad ($i\mathrel{+}=1$)};
+
+  \node[terminal,right=38mm of cond] (ret)
+    {\textbf{Retornar}\\
+     \texttt{ret}\\Resultado escalar en \texttt{xmm0}};
+
+  \draw[flow] (start) -- (init);
+  \draw[flow] (init) -- (cond);
+  \draw[flow] (cond) -- node[branch,left]{Sí} (load);
+  \draw[flow] (load) -- (arith);
+  \draw[flow] (arith) -- (inc);
+  \draw[flow] (cond) -- node[branch,above]{No} (ret);
+  \draw[flow] (inc.east) -- ++(28mm,0) |- (cond.east);
+
+  \end{tikzpicture}%
+  }
+  \caption{Flujo de ejecución del bucle escalar SISD de
+    \texttt{sum\_array}.}
+  \label{fig:flujo-sum-array-escalar}
+\end{figure}
+
+\clearpage
+\subsection{Bucle vectorial AVX2 con remanente}
+
+El kernel vectorial procesa ocho valores \texttt{float32} por iteración. Antes
+de entrar al bucle calcula $N_{\mathrm{vec}}=n\mathbin{\&}(\mathord{\sim}7)$,
+reduce horizontalmente los acumuladores al concluir los bloques completos y
+procesa los $n\bmod8$ elementos restantes mediante un bucle escalar de cierre.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{!}{0.72\textheight}{%
+  \begin{tikzpicture}[
+    font=\sffamily,
+    node distance=7mm,
+    flow/.style={-{Latex[length=3mm,width=2mm]},thick,draw=black!70},
+    terminal/.style={
+      ellipse,draw=blue!65!black,fill=blue!8,thick,
+      align=center,minimum height=11mm,text width=76mm
+    },
+    process/.style={
+      rectangle,rounded corners=2pt,draw=green!50!black,fill=green!8,
+      thick,align=center,minimum height=12mm,text width=82mm
+    },
+    reduction/.style={
+      rectangle,rounded corners=2pt,draw=violet!70!black,fill=violet!8,
+      thick,align=left,minimum height=25mm,text width=100mm
+    },
+    cleanup/.style={
+      rectangle,rounded corners=2pt,draw=orange!75!black,fill=orange!9,
+      thick,align=center,minimum height=12mm,text width=82mm
+    },
+    decision/.style={
+      diamond,aspect=2.25,draw=orange!75!black,fill=orange!10,
+      thick,align=center,inner sep=1.3mm,text width=42mm
+    },
+    branch/.style={font=\bfseries\small,fill=white,inner sep=1pt}
+  ]
+
+  \node[terminal] (vstart)
+    {\textbf{Inicio de \texttt{sum\_array} vectorial (AVX2)}\\
+     \texttt{rdi = arr} alineado a 32 B, \texttt{esi = n}};
+
+  \node[process,below=of vstart] (vinit)
+    {\textbf{Inicializar índice y acumulador}\\
+     \texttt{eax = 0} \quad ($i=0$)\\
+     \texttt{vxorps ymm0, ymm0, ymm0} \quad (ocho sumas en cero)};
+
+  \node[process,below=of vinit] (vlimit)
+    {\textbf{Calcular el límite vectorial}\\
+     \texttt{ecx = esi \& \textasciitilde 7}\\
+     $N_{\mathrm{vec}}$ es múltiplo de ocho};
+
+  \node[decision,below=10mm of vlimit] (vcheck)
+    {$\texttt{ecx}\geq8$?\\¿Existe un bloque completo?};
+
+  \node[decision,below=11mm of vcheck] (vcond)
+    {$i<\texttt{ecx}$?\\\texttt{cmp eax, ecx} / \texttt{jl}};
+
+  \node[process,below=11mm of vcond] (vload)
+    {\textbf{Carga alineada de 256 bits}\\
+     \texttt{vmovaps ymm1, [rdi + rax*4]}};
+
+  \node[process,below=of vload] (vadd)
+    {\textbf{Suma empaquetada en ocho carriles}\\
+     \texttt{vaddps ymm0, ymm0, ymm1}};
+
+  \node[process,below=of vadd] (vinc)
+    {\textbf{Avanzar el índice vectorial}\\
+     \texttt{add eax, 8} \quad ($i\mathrel{+}=8$)};
+
+  \node[reduction,right=34mm of vcond] (vreduce)
+    {\textbf{Reducción horizontal en árbol: $8\rightarrow1$}\\[1mm]
+     1. \texttt{vextractf128 xmm2, ymm0, 1}\\
+     2. \texttt{vaddps xmm0, xmm0, xmm2}\\
+     3. \texttt{vhaddps xmm0, xmm0, xmm0}\\
+     4. \texttt{vhaddps xmm0, xmm0, xmm0}\\
+     Resultado total en \texttt{xmm0[0]}};
+
+  \node[decision,below=30mm of vinc] (tailcond)
+    {$i<\texttt{esi}$?\\¿Quedan $n\bmod8$ elementos?};
+
+  \node[process,below=11mm of tailcond] (tailload)
+    {\textbf{Carga escalar segura}\\
+     \texttt{vmovss xmm1, [rdi + rax*4]}};
+
+  \node[process,below=of tailload] (tailadd)
+    {\textbf{Acumular sobre el resultado reducido}\\
+     \texttt{vaddss xmm0, xmm0, xmm1}};
+
+  \node[process,below=of tailadd] (tailinc)
+    {\textbf{Avanzar el índice escalar}\\
+     \texttt{inc eax} \quad ($i\mathrel{+}=1$)};
+
+  \node[cleanup,right=35mm of tailcond] (vzero)
+    {\textbf{Limpiar los carriles superiores}\\
+     \texttt{vzeroupper}\\Evita transiciones AVX--SSE costosas};
+
+  \node[terminal,below=of vzero] (vret)
+    {\textbf{Retornar}\\
+     \texttt{ret}; resultado escalar en \texttt{xmm0}};
+
+  % Flujo principal y ramas.
+  \draw[flow] (vstart) -- (vinit);
+  \draw[flow] (vinit) -- (vlimit);
+  \draw[flow] (vlimit) -- (vcheck);
+  \draw[flow] (vcheck) -- node[branch,left]{Sí} (vcond);
+  \draw[flow] (vcond) -- node[branch,left]{Sí} (vload);
+  \draw[flow] (vload) -- (vadd);
+  \draw[flow] (vadd) -- (vinc);
+  \draw[flow] (vinc.west) -- ++(-24mm,0) |- (vcond.west);
+  \draw[flow] (vcond) -- node[branch,above]{No} (vreduce);
+  \draw[flow] (vreduce.south) |- (tailcond.east);
+  \draw[flow] (vcheck.west) -- ++(-30mm,0) node[branch,above]{No: $n<8$}
+    |- (tailcond.west);
+  \draw[flow] (tailcond) -- node[branch,left]{Sí} (tailload);
+  \draw[flow] (tailload) -- (tailadd);
+  \draw[flow] (tailadd) -- (tailinc);
+  \draw[flow] (tailinc.west) -- ++(-24mm,0) |- (tailcond.west);
+  \draw[flow] (tailcond) -- node[branch,above]{No} (vzero);
+  \draw[flow] (vzero) -- (vret);
+
+  \end{tikzpicture}%
+  }
+  \caption{Flujo del bucle AVX2, la reducción horizontal y el procesamiento
+    escalar del remanente.}
+  \label{fig:flujo-sum-array-avx2}
+\end{figure}
+
+\clearpage
+\subsection{Normalización vectorial con guarda de desviación nula}
+
+La rutina \texttt{normalize\_array} calcula
+\begin{equation}
+  \mathrm{out}[i]=\frac{\mathrm{in}[i]-\mu}{\sigma}.
+  \label{eq:appendix-vector-normalization}
+\end{equation}
+Los parámetros escalares $\mu$ y $\sigma$ se replican en los ocho carriles de
+registros YMM mediante \texttt{vbroadcastss}. Antes de efectuar cualquier
+división, la rutina comprueba si $\sigma=0.0$; en ese caso ejecuta una copia
+directa para evitar valores NaN o infinitos. La Figura~\ref{fig:flujo-normalize-avx2}
+presenta ambas rutas y sus bucles escalares de remanente.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{!}{0.76\textheight}{%
+  \begin{tikzpicture}[
+    font=\sffamily,
+    node distance=7mm,
+    flow/.style={-{Latex[length=2.8mm,width=1.9mm]},thick,draw=black!70},
+    terminal/.style={
+      ellipse,draw=blue!65!black,fill=blue!8,thick,
+      align=center,minimum height=10mm,text width=70mm
+    },
+    guard/.style={
+      rectangle,rounded corners=2pt,draw=orange!75!black,fill=orange!9,
+      thick,align=center,minimum height=12mm,text width=76mm
+    },
+    copy/.style={
+      rectangle,rounded corners=2pt,draw=violet!70!black,fill=violet!8,
+      thick,align=center,minimum height=12mm,text width=76mm
+    },
+    norm/.style={
+      rectangle,rounded corners=2pt,draw=green!50!black,fill=green!8,
+      thick,align=center,minimum height=12mm,text width=82mm
+    },
+    decision/.style={
+      diamond,aspect=2.15,draw=orange!75!black,fill=orange!10,
+      thick,align=center,inner sep=1.2mm,text width=39mm
+    },
+    branch/.style={font=\bfseries\small,fill=white,inner sep=1pt}
+  ]
+
+  % Entrada y guardas comunes.
+  \node[terminal] (nstart)
+    {\textbf{Inicio de \texttt{normalize\_array} vectorial}\\
+     \texttt{rdi=in}, \texttt{rsi=out}, \texttt{edx=n}\\
+     \texttt{xmm0=mean}, \texttt{xmm1=stddev}};
+
+  \node[decision,below=9mm of nstart] (checkn)
+    {$n>0$?\\\texttt{test edx, edx} / \texttt{jg}};
+
+  \node[guard,below=10mm of checkn] (zerosigma)
+    {\textbf{Comparar la desviación con cero}\\
+     \texttt{vxorps xmm2, xmm2, xmm2}\\
+     \texttt{vucomiss xmm1, xmm2}};
+
+  \node[decision,below=10mm of zerosigma] (checkzero)
+    {$\sigma=0.0f$?\\\texttt{je .norm\_copy\_loop}};
+
+  % Ruta izquierda: copia directa.
+  \node[copy,below left=15mm and 31mm of checkzero] (copyprep)
+    {\textbf{Caso singular: copia sin modificar}\\
+     \texttt{ecx = edx \& \textasciitilde 7}\\
+     \texttt{eax = 0}};
+
+  \node[decision,below=10mm of copyprep] (copyveccond)
+    {$i<\texttt{ecx}$?\\¿Queda un bloque de ocho?};
+
+  \node[copy,below=10mm of copyveccond] (copyvecbody)
+    {\textbf{Copiar ocho valores}\\
+     \texttt{vmovaps ymm0, [rdi + rax*4]}\\
+     \texttt{vmovaps [rsi + rax*4], ymm0}\\
+     \texttt{add eax, 8}};
+
+  \node[decision,below=15mm of copyvecbody] (copytailcond)
+    {$i<\texttt{edx}$?\\¿Queda un remanente?};
+
+  \node[copy,below=10mm of copytailcond] (copytailbody)
+    {\textbf{Copiar un valor remanente}\\
+     \texttt{vmovss xmm0, [rdi + rax*4]}\\
+     \texttt{vmovss [rsi + rax*4], xmm0}\\
+     \texttt{inc eax}};
+
+  \node[guard,below=12mm of copytailbody] (vzerocopy)
+    {\texttt{vzeroupper}};
+
+  \node[terminal,below=of vzerocopy] (retdirect)
+    {\textbf{Retornar directamente}\\\texttt{ret}};
+
+  % Ruta derecha: normalización AVX2.
+  \node[norm,below right=15mm and 31mm of checkzero] (broadcast)
+    {\textbf{Replicar parámetros en 256 bits}\\
+     \texttt{vbroadcastss ymm4, xmm0} \quad (ocho medias)\\
+     \texttt{vbroadcastss ymm5, xmm1} \quad (ocho desviaciones)};
+
+  \node[norm,below=of broadcast] (normprep)
+    {\textbf{Preparar el límite vectorial}\\
+     \texttt{ecx = edx \& \textasciitilde 7}\\
+     \texttt{eax = 0}};
+
+  \node[decision,below=10mm of normprep] (normveccond)
+    {$i<\texttt{ecx}$?\\¿Queda un bloque de ocho?};
+
+  \node[norm,below=10mm of normveccond] (normvecstep)
+    {\textbf{Normalizar ocho valores en paralelo}\\
+     \texttt{vmovaps ymm0, [rdi + rax*4]}\\
+     \texttt{vsubps ymm0, ymm0, ymm4}\\
+     \texttt{vdivps ymm0, ymm0, ymm5}\\
+     \texttt{vmovaps [rsi + rax*4], ymm0}};
+
+  \node[norm,below=of normvecstep] (normvecinc)
+    {\textbf{Avanzar el índice vectorial}\\
+     \texttt{add eax, 8}};
+
+  \node[decision,below=10mm of normvecinc] (normtailcond)
+    {$i<\texttt{edx}$?\\¿Quedan $n\bmod8$ valores?};
+
+  \node[norm,below=10mm of normtailcond] (normtailstep)
+    {\textbf{Normalizar un valor remanente}\\
+     \texttt{vmovss xmm2, [rdi + rax*4]}\\
+     \texttt{vsubss xmm2, xmm2, xmm4}\\
+     \texttt{vdivss xmm2, xmm2, xmm5}\\
+     \texttt{vmovss [rsi + rax*4], xmm2}};
+
+  \node[norm,below=of normtailstep] (normtailinc)
+    {\textbf{Avanzar el índice escalar}\\
+     \texttt{inc eax}};
+
+  \node[guard,below=12mm of normtailinc] (normvzero)
+    {\textbf{Limpiar los carriles superiores}\\
+     \texttt{vzeroupper}};
+
+  \node[terminal,below=of normvzero] (retfinal)
+    {\textbf{Retornar}\\\texttt{ret}};
+
+  % Flujo común.
+  \draw[flow] (nstart) -- (checkn);
+  \draw[flow] (checkn) -- node[branch,left]{Sí} (zerosigma);
+  \draw[flow] (zerosigma) -- (checkzero);
+  \draw[flow] (checkn.west) -- ++(-38mm,0) node[branch,above]{No}
+    |- (retdirect.west);
+
+  % Rama de copia.
+  \draw[flow] (checkzero) -- node[branch,above left]{Sí: $\sigma=0$} (copyprep);
+  \draw[flow] (copyprep) -- (copyveccond);
+  \draw[flow] (copyveccond) -- node[branch,left]{Sí} (copyvecbody);
+  \draw[flow] (copyvecbody.west) -- ++(-22mm,0) |- (copyveccond.west);
+  \draw[flow] (copyveccond.east) -- ++(13mm,0) node[branch,above]{No}
+    |- (copytailcond.east);
+  \draw[flow] (copytailcond) -- node[branch,left]{Sí} (copytailbody);
+  \draw[flow] (copytailbody.west) -- ++(-22mm,0) |- (copytailcond.west);
+  \draw[flow] (copytailcond.east) -- ++(13mm,0) node[branch,above]{No}
+    |- (vzerocopy.east);
+  \draw[flow] (vzerocopy) -- (retdirect);
+
+  % Rama de normalización.
+  \draw[flow] (checkzero) -- node[branch,above right]{No: $\sigma>0$} (broadcast);
+  \draw[flow] (broadcast) -- (normprep);
+  \draw[flow] (normprep) -- (normveccond);
+  \draw[flow] (normveccond) -- node[branch,left]{Sí} (normvecstep);
+  \draw[flow] (normvecstep) -- (normvecinc);
+  \draw[flow] (normvecinc.east) -- ++(22mm,0) |- (normveccond.east);
+  \draw[flow] (normveccond.west) -- ++(-13mm,0) node[branch,above]{No}
+    |- (normtailcond.west);
+  \draw[flow] (normtailcond) -- node[branch,left]{Sí} (normtailstep);
+  \draw[flow] (normtailstep) -- (normtailinc);
+  \draw[flow] (normtailinc.east) -- ++(22mm,0) |- (normtailcond.east);
+  \draw[flow] (normtailcond.west) -- ++(-13mm,0) node[branch,above]{No}
+    |- (normvzero.west);
+  \draw[flow] (normvzero) -- (retfinal);
+
+  \end{tikzpicture}%
+  }
+  \caption{Flujo de \texttt{normalize\_array}: guarda para $\sigma=0$, copia
+    directa y normalización vectorial con bucles de remanente.}
+  \label{fig:flujo-normalize-avx2}
+\end{figure}
+
+\clearpage
+\subsection{Flujo y validación de memoria}
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.94\textwidth}{!}{%
+  \begin{tikzpicture}[
+    font=\sffamily,
+    node distance=9mm,
+    flow/.style={-{Latex[length=3mm,width=2mm]},thick,draw=black!70},
+    terminal/.style={
+      ellipse,draw=blue!65!black,fill=blue!8,thick,
+      align=center,minimum height=11mm,text width=76mm
+    },
+    memory/.style={
+      rectangle,rounded corners=2pt,draw=blue!60!black,fill=blue!6,
+      thick,align=center,minimum height=13mm,text width=92mm
+    },
+    fault/.style={
+      rectangle,rounded corners=2pt,draw=red!70!black,fill=red!8,
+      thick,align=center,minimum height=14mm,text width=82mm
+    },
+    scalar/.style={
+      rectangle,rounded corners=2pt,draw=violet!70!black,fill=violet!8,
+      thick,align=left,minimum height=22mm,text width=82mm
+    },
+    vector/.style={
+      rectangle,rounded corners=2pt,draw=green!50!black,fill=green!8,
+      thick,align=left,minimum height=22mm,text width=82mm
+    },
+    decision/.style={
+      diamond,aspect=2.2,draw=orange!75!black,fill=orange!10,
+      thick,align=center,inner sep=1.3mm,text width=42mm
+    },
+    branch/.style={font=\bfseries\small,fill=white,inner sep=1pt}
+  ]
+
+  \node[terminal] (pstart)
+    {\textbf{Puntero de memoria \texttt{arr}}\\
+     Retornado por \texttt{aligned\_alloc(32, size)}};
+
+  \node[decision,below=10mm of pstart] (pcheck)
+    {¿Dirección alineada a 32 bytes?\\
+     $\texttt{arr}\mathbin{\&}\texttt{0x1F}=0$};
+
+  \node[fault,left=38mm of pcheck] (gpfault)
+    {\textbf{Fallo general de protección \#GP(0)}\\
+     La CPU aborta \texttt{vmovaps}\\
+     El sistema entrega la señal SIGSEGV};
+
+  \node[terminal,below=of gpfault] (abort)
+    {\textbf{Terminación abrupta del programa}};
+
+  \node[memory,below=12mm of pcheck] (valid)
+    {\textbf{Dirección válida para \texttt{vmovaps}}\\
+     Terminaciones posibles: \texttt{0x...00}, \texttt{0x...20},
+     \texttt{0x...40} o \texttt{0x...60}};
+
+  \node[memory,below=of valid] (cacheline)
+    {\textbf{Mapeo en una línea L1d de 64 bytes}\\
+     Offset \texttt{0x00}: $f_0\ldots f_7$ (32 B)\\
+     Offset \texttt{0x20}: $f_8\ldots f_{15}$ (32 B)\\
+     Sin división de una carga AVX2 entre dos líneas de caché};
+
+  \node[decision,below=11mm of cacheline] (kernelbranch)
+    {Selección del kernel\\de ejecución};
+
+  \node[scalar,below left=15mm and 24mm of kernelbranch] (strideScalar)
+    {\textbf{Kernel escalar SISD: avance de 4 B}\\[1mm]
+     1. \texttt{movss xmm1, [rdi + rax*4]}\\
+     2. \texttt{addss xmm0, xmm1}\\
+     3. \texttt{inc eax}\\
+     16 iteraciones por línea de caché};
+
+  \node[vector,below right=15mm and 24mm of kernelbranch] (strideVector)
+    {\textbf{Kernel vectorial AVX2: avance de 32 B}\\[1mm]
+     1. \texttt{vmovaps ymm1, [rdi + rax*4]}\\
+     2. \texttt{vaddps ymm0, ymm0, ymm1}\\
+     3. \texttt{add eax, 8}\\
+     2 iteraciones por línea de caché};
+
+  \node[terminal,below=24mm of kernelbranch] (pend)
+    {\textbf{Fin del recorrido del arreglo}};
+
+  \draw[flow] (pstart) -- (pcheck);
+  \draw[flow] (pcheck) -- node[branch,above]{No: desalineado} (gpfault);
+  \draw[flow] (gpfault) -- (abort);
+  \draw[flow] (pcheck) -- node[branch,left]{Sí} (valid);
+  \draw[flow] (valid) -- (cacheline);
+  \draw[flow] (cacheline) -- (kernelbranch);
+  \draw[flow] (kernelbranch) -- node[branch,above left]{Escalar} (strideScalar);
+  \draw[flow] (kernelbranch) -- node[branch,above right]{AVX2} (strideVector);
+  \draw[flow] (strideScalar.south) |- (pend.west);
+  \draw[flow] (strideVector.south) |- (pend.east);
+
+  \end{tikzpicture}%
+  }
+  \caption{Validación de alineación, mapeo en líneas de caché y patrones de
+    recorrido escalar y AVX2.}
+  \label{fig:flujo-validacion-memoria}
+\end{figure}
+
+\clearpage
+\subsection{Diagrama 3: Tablas exhaustivas de asignación de registros}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.18}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.16\textwidth}
+  >{\raggedright\arraybackslash}p{0.23\textwidth}
+  >{\raggedright\arraybackslash}p{0.20\textwidth}
+  >{\raggedright\arraybackslash}p{0.35\textwidth}@{}}
+\caption{Convención de registros en System V AMD64 ABI.}
+\label{tab:abi-register-convention}\\
+\toprule
+Clase ABI & Registros de hardware & Regla de preservación &
+Comportamiento en subrutinas \\
+\midrule
+\endfirsthead
+\toprule
+Clase ABI & Registros de hardware & Regla de preservación &
+Comportamiento en subrutinas \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\textbf{Callee-saved} (no volátiles) &
+  \texttt{RBX}, \texttt{RBP}, \texttt{R12}--\texttt{R15}, \texttt{RSP} &
+  Obligatorio preservar & Si la función los modifica, debe guardarlos en la
+  pila y restaurarlos antes de retornar. \\
+\textbf{Caller-saved} (volátiles) &
+  \texttt{RAX}, \texttt{RCX}, \texttt{RDX}, \texttt{RSI}, \texttt{RDI},
+  \texttt{R8}--\texttt{R11} & Libre modificación & La función llamada puede
+  utilizarlos sin preservación; el invocador asume que se destruyen tras un
+  \texttt{call}. \\
+\textbf{SIMD volátiles} &
+  \texttt{XMM0}--\texttt{XMM15} / \texttt{YMM0}--\texttt{YMM15} &
+  Libre modificación & Todos los registros vectoriales son volátiles bajo la
+  ABI System V AMD64. \\
+\end{longtable}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.16\textwidth}
+  >{\raggedright\arraybackslash}p{0.40\textwidth}@{}}
+\caption{Asignación de registros de \texttt{sum\_array}: implementación escalar.}
+\label{tab:sum-array-scalar-registers}\\
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endfirsthead
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{RDI} & GPR 64 bits & Caller-saved & Entrada/bucle & Puntero base
+  al arreglo de entrada \texttt{arr}. \\
+\texttt{ESI} & GPR 32 bits & Caller-saved & Entrada/bucle & Límite superior
+  $n$ y condición de parada. \\
+\texttt{EAX}/\texttt{RAX} & GPR 32/64 bits & Caller-saved & Bucle escalar &
+  Índice $i$; direccionamiento \texttt{[rdi + rax*4]}. \\
+\texttt{XMM0} & SSE 128 bits & Caller-saved & Bucle/retorno & Acumulador
+  escalar inicializado con \texttt{xorps}; valor de retorno en el carril 0. \\
+\texttt{XMM1} & SSE 128 bits & Caller-saved & Bucle escalar & Carga temporal
+  del elemento \texttt{arr[i]} mediante \texttt{movss}. \\
+\end{longtable}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.17\textwidth}
+  >{\raggedright\arraybackslash}p{0.39\textwidth}@{}}
+\caption{Asignación de registros de \texttt{sum\_array}: implementación AVX2.}
+\label{tab:sum-array-avx2-registers}\\
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endfirsthead
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{RDI} & GPR 64 bits & Caller-saved & Entrada/bucles & Puntero base
+  \texttt{arr}, alineado a 32 bytes. \\
+\texttt{ESI} & GPR 32 bits & Caller-saved & Entrada/remanente & Cantidad total
+  de elementos $n$. \\
+\texttt{ECX} & GPR 32 bits & Caller-saved & Particionado/AVX2 & Límite
+  $N_{\mathrm{vec}}=n\mathbin{\&}(\mathord{\sim}7)$. \\
+\texttt{EAX}/\texttt{RAX} & GPR 32/64 bits & Caller-saved & AVX2/remanente &
+  Índice $i$; avanza ocho elementos en AVX2 y uno en el remanente. \\
+\texttt{YMM0} & AVX 256 bits & Caller-saved & Bucle AVX2 & Acumulador de
+  ocho sumas parciales, inicializado con \texttt{vxorps}. \\
+\texttt{YMM1} & AVX 256 bits & Caller-saved & Bucle AVX2 & Carga alineada
+  de ocho valores mediante \texttt{vmovaps}. \\
+\texttt{XMM2} & SSE 128 bits & Caller-saved & Reducción & Mitad alta de
+  \texttt{YMM0}, extraída con \texttt{vextractf128}. \\
+\texttt{XMM0} & SSE 128 bits & Caller-saved & Reducción/remanente/retorno &
+  Acumulador colapsado con \texttt{vhaddps}; recibe el remanente y retorna el
+  resultado en el carril 0. \\
+\texttt{XMM1} & SSE 128 bits & Caller-saved & Remanente escalar & Carga del
+  valor restante mediante \texttt{vmovss}. \\
+\end{longtable}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.17\textwidth}
+  >{\raggedright\arraybackslash}p{0.39\textwidth}@{}}
+\caption{Asignación de registros de \texttt{compute\_stats}: implementación escalar.}
+\label{tab:compute-stats-scalar-registers}\\
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endfirsthead
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{R12} & GPR 64 bits & Callee-saved & Pasadas 1 y 2 & Puntero base
+  \texttt{arr}, recibido inicialmente en \texttt{RDI}. \\
+\texttt{R13D} & GPR 32 bits & Callee-saved & Pasadas 1 y 2 & Tamaño $n$,
+  recibido inicialmente en \texttt{ESI}. \\
+\texttt{R14} & GPR 64 bits & Callee-saved & Fin de pasada 1 & Puntero
+  \texttt{mean*}, recibido en \texttt{RDX}. \\
+\texttt{R15} & GPR 64 bits & Callee-saved & Fin de pasada 2 & Puntero
+  \texttt{var*}, recibido en \texttt{RCX}. \\
+\texttt{RBX} & GPR 64 bits & Callee-saved & Fin de pasada 1 & Puntero
+  \texttt{min*}, recibido en \texttt{R8}. \\
+\texttt{RBP} & GPR 64 bits & Callee-saved & Fin de pasada 1 & Puntero
+  \texttt{max*}, recibido en \texttt{R9}. \\
+\texttt{EAX}/\texttt{RAX} & GPR 32/64 bits & Caller-saved & Pasadas 1 y 2 &
+  Índice $i$: $1\ldots n-1$ en P1 y $0\ldots n-1$ en P2. \\
+\texttt{XMM0} & SSE 128 bits & Caller-saved & Pasada 1 & Acumulador de
+  $\sum x_i$. \\
+\texttt{XMM1} & SSE 128 bits & Caller-saved & Pasada 1 & Acumulador del
+  mínimo mediante \texttt{minss}. \\
+\texttt{XMM2} & SSE 128 bits & Caller-saved & Pasada 1 & Acumulador del
+  máximo mediante \texttt{maxss}. \\
+\texttt{XMM3} & SSE 128 bits & Caller-saved & Pasadas 1 y 2 & Registro
+  temporal para \texttt{arr[i]} y la desviación respecto a la media. \\
+\texttt{XMM4} & SSE 128 bits & Caller-saved & Pasadas 1 y 2 & Conversión de
+  $n$ a punto flotante mediante \texttt{cvtsi2ss}. \\
+\texttt{XMM5} & SSE 128 bits & Caller-saved & Fin P1/P2 & Media
+  $\mu=\mathrm{sum}/n$, conservada para la segunda pasada. \\
+\texttt{XMM6} & SSE 128 bits & Caller-saved & Pasada 2 & Acumulador de
+  $\sum(x_i-\mu)^2$. \\
+\end{longtable}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.17\textwidth}
+  >{\raggedright\arraybackslash}p{0.39\textwidth}@{}}
+\caption{Asignación de registros de \texttt{compute\_stats}: implementación AVX2.}
+\label{tab:compute-stats-avx2-registers}\\
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endfirsthead
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{R12} & GPR 64 bits & Callee-saved & Pasadas 1 y 2 & Puntero base
+  \texttt{arr}, alineado a 32 bytes. \\
+\texttt{R13D} & GPR 32 bits & Callee-saved & Pasadas 1 y 2 & Tamaño total $n$. \\
+\texttt{R14} & GPR 64 bits & Callee-saved & Fin de pasada 1 & Destino
+  \texttt{mean*}. \\
+\texttt{R15} & GPR 64 bits & Callee-saved & Fin de pasada 2 & Destino
+  \texttt{var*}. \\
+\texttt{RBX} & GPR 64 bits & Callee-saved & Fin de pasada 1 & Destino
+  \texttt{min*}. \\
+\texttt{RBP} & GPR 64 bits & Callee-saved & Fin de pasada 1 & Destino
+  \texttt{max*}. \\
+\texttt{ECX} & GPR 32 bits & Caller-saved & Particionado P1/P2 & Límite
+  $N_{\mathrm{vec}}=n\mathbin{\&}(\mathord{\sim}7)$. \\
+\texttt{EAX}/\texttt{RAX} & GPR 32/64 bits & Caller-saved & Índice P1/P2 &
+  Avanza ocho elementos en AVX2 y uno en el remanente. \\
+\texttt{YMM0} & AVX 256 bits & Caller-saved & P1/P2 vectoriales & P1:
+  acumulador de suma; P2: acumulador de desviaciones cuadráticas. \\
+\texttt{YMM1} & AVX 256 bits & Caller-saved & P1/P2 vectoriales & P1:
+  acumulador mínimo; P2: carga y cálculo de $(x-\mu)^2$. \\
+\texttt{YMM2} & AVX 256 bits & Caller-saved & P1 vectorial & Acumulador máximo
+  mediante \texttt{vmaxps}. \\
+\texttt{YMM3} & AVX 256 bits & Caller-saved & P1/P2 vectoriales & P1: carga
+  de ocho valores; P2: difusión de la media. \\
+\texttt{XMM0} & SSE 128 bits & Caller-saved & Reducciones P1/P2 & Reducción
+  de suma y de varianza. \\
+\texttt{XMM1} & SSE 128 bits & Caller-saved & Reducción/remanente & Mínimo
+  colapsado en P1 y temporal de diferencias en el remanente de P2. \\
+\texttt{XMM2} & SSE 128 bits & Caller-saved & Reducción/remanente & Máximo
+  colapsado y auxiliar escalar. \\
+\texttt{XMM3} & SSE 128 bits & Caller-saved & Reducción/remanente & Auxiliar
+  para \texttt{vshufps} y operaciones del remanente. \\
+\texttt{XMM4} & SSE 128 bits & Caller-saved & Divisor P1/P2 & Representación
+  flotante de $n$ mediante \texttt{vcvtsi2ss}. \\
+\texttt{XMM5} & SSE 128 bits & Caller-saved & Pasadas 1 y 2 & Media escalar
+  $\mu$, utilizada en la difusión y el remanente. \\
+\end{longtable}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.17\textwidth}
+  >{\raggedright\arraybackslash}p{0.39\textwidth}@{}}
+\caption{Asignación de registros de \texttt{normalize\_array}: implementación escalar.}
+\label{tab:normalize-scalar-registers}\\
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endfirsthead
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{RDI} & GPR 64 bits & Caller-saved & Entrada/bucle & Puntero al arreglo
+  de entrada \texttt{in}. \\
+\texttt{RSI} & GPR 64 bits & Caller-saved & Entrada/bucle & Puntero al arreglo
+  de salida \texttt{out}. \\
+\texttt{EDX} & GPR 32 bits & Caller-saved & Entrada/bucle & Tamaño $n$. \\
+\texttt{XMM0} & SSE 128 bits & Caller-saved & Entrada/bucle & Media escalar
+  $\mu$. \\
+\texttt{XMM1} & SSE 128 bits & Caller-saved & Entrada/bucle & Desviación estándar
+  $\sigma$. \\
+\texttt{XMM2} & SSE 128 bits & Caller-saved & Detección de borde & Cero escalar para
+  \texttt{ucomiss xmm1, xmm2}. \\
+\texttt{EAX}/\texttt{RAX} & GPR 32/64 bits & Caller-saved & Bucle & Índice
+  $i=0\ldots n-1$. \\
+\texttt{XMM3} & SSE 128 bits & Caller-saved & Bucle & Temporal que contiene
+  \texttt{in[i]}, $\mathrm{in}[i]-\mu$ y el resultado normalizado. \\
+\end{longtable}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.13\textwidth}
+  >{\raggedright\arraybackslash}p{0.17\textwidth}
+  >{\raggedright\arraybackslash}p{0.39\textwidth}@{}}
+\caption{Asignación de registros de \texttt{normalize\_array}: implementación AVX2.}
+\label{tab:normalize-avx2-registers}\\
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endfirsthead
+\toprule
+Registro & Tipo y ancho & Estado ABI & Fase & Rol técnico y semántica \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{RDI} & GPR 64 bits & Caller-saved & Entrada/bucles & Puntero base
+  \texttt{in}, alineado a 32 bytes. \\
+\texttt{RSI} & GPR 64 bits & Caller-saved & Entrada/bucles & Puntero base
+  \texttt{out}, alineado a 32 bytes. \\
+\texttt{EDX} & GPR 32 bits & Caller-saved & Entrada/bucles & Tamaño $n$. \\
+\texttt{XMM0} & SSE 128 bits & Caller-saved & Entrada/difusión & Media escalar
+  $\mu$ recibida desde C. \\
+\texttt{XMM1} & SSE 128 bits & Caller-saved & Entrada/difusión & Desviación estándar
+  $\sigma$ recibida desde C. \\
+\texttt{XMM2} & SSE 128 bits & Caller-saved & Detección/remanente & Comparación
+  $\sigma=0.0$ y temporal escalar. \\
+\texttt{YMM4} & AVX 256 bits & Caller-saved & AVX2/remanente & Broadcast
+  $[\mu,\mu,\mu,\mu,\mu,\mu,\mu,\mu]$. \\
+\texttt{YMM5} & AVX 256 bits & Caller-saved & AVX2/remanente & Broadcast
+  $[\sigma,\sigma,\sigma,\sigma,\sigma,\sigma,\sigma,\sigma]$. \\
+\texttt{ECX} & GPR 32 bits & Caller-saved & Particionado AVX2 & Límite
+  $N_{\mathrm{vec}}=n\mathbin{\&}(\mathord{\sim}7)$. \\
+\texttt{EAX}/\texttt{RAX} & GPR 32/64 bits & Caller-saved & AVX2/remanente &
+  Índice $i$; paso de ocho en vector y uno en el remanente. \\
+\texttt{YMM0} & AVX 256 bits & Caller-saved & Bucle AVX2 & Carga de ocho valores,
+  resta, división y almacenamiento empaquetados. \\
+\end{longtable}
+
+\endgroup
+
+\end{document}

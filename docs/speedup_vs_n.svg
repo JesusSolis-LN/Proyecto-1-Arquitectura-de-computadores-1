@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" width="900" height="500">
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text x="450.0" y="36" font-family="sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#1a202c">Speedup Real vs. Tamaño del Arreglo N (AVX2 vs. Escalar)</text>
+  <text x="450.0" y="56" font-family="sans-serif" font-size="12" text-anchor="middle" fill="#718096">Evaluado en Intel Core i3-1215U (P-Core Golden Cove, 30 repeticiones por punto)</text>
+  <line x1="90" y1="114.57397653037145" x2="850" y2="114.57397653037145" stroke="#e53e3e" stroke-dasharray="6,4" stroke-width="2.5"/>
+  <text x="840" y="106.57397653037145" font-family="sans-serif" font-size="12" fill="#e53e3e" text-anchor="end" font-weight="bold">Límite Teórico AVX2 (8.0x)</text>
+  <line x1="90" y1="430" x2="850" y2="430" stroke="#2d3748" stroke-width="2"/>
+  <line x1="90" y1="70" x2="90" y2="430" stroke="#2d3748" stroke-width="2"/>
+  <line x1="90" y1="430.0" x2="850" y2="430.0" stroke="#edf2f7" stroke-width="1.5"/>
+  <text x="78" y="434.0" font-family="sans-serif" font-size="12" fill="#4a5568" text-anchor="end">0x</text>
+  <line x1="90" y1="351.1434941325929" x2="850" y2="351.1434941325929" stroke="#edf2f7" stroke-width="1.5"/>
+  <text x="78" y="355.1434941325929" font-family="sans-serif" font-size="12" fill="#4a5568" text-anchor="end">2x</text>
+  <line x1="90" y1="272.28698826518576" x2="850" y2="272.28698826518576" stroke="#edf2f7" stroke-width="1.5"/>
+  <text x="78" y="276.28698826518576" font-family="sans-serif" font-size="12" fill="#4a5568" text-anchor="end">4x</text>
+  <line x1="90" y1="193.43048239777858" x2="850" y2="193.43048239777858" stroke="#edf2f7" stroke-width="1.5"/>
+  <text x="78" y="197.43048239777858" font-family="sans-serif" font-size="12" fill="#4a5568" text-anchor="end">6x</text>
+  <line x1="90" y1="114.57397653037145" x2="850" y2="114.57397653037145" stroke="#edf2f7" stroke-width="1.5"/>
+  <text x="78" y="118.57397653037145" font-family="sans-serif" font-size="12" fill="#4a5568" text-anchor="end">8x</text>
+  <polyline fill="none" stroke="#2b6cb0" stroke-width="3.5" points="90.0,184.0 443.4,142.0 620.1,311.0 850.0,342.8"/>
+  <circle cx="90.0" cy="184.0" r="7" fill="#3182ce" stroke="#ffffff" stroke-width="2.5"/>
+  <text x="90.0" y="169.98838179874812" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2b6cb0" text-anchor="middle">6.24x</text>
+  <line x1="90.0" y1="430" x2="90.0" y2="436" stroke="#2d3748" stroke-width="1.5"/>
+  <text x="90.0" y="452" font-family="sans-serif" font-size="12" font-weight="bold" fill="#2d3748" text-anchor="middle">10^3</text>
+  <circle cx="443.4" cy="142.0" r="7" fill="#3182ce" stroke="#ffffff" stroke-width="2.5"/>
+  <text x="443.4" y="128.0" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2b6cb0" text-anchor="middle">7.30x</text>
+  <line x1="443.4" y1="430" x2="443.4" y2="436" stroke="#2d3748" stroke-width="1.5"/>
+  <text x="443.4" y="452" font-family="sans-serif" font-size="12" font-weight="bold" fill="#2d3748" text-anchor="middle">10^5</text>
+  <circle cx="620.1" cy="311.0" r="7" fill="#3182ce" stroke="#ffffff" stroke-width="2.5"/>
+  <text x="620.1" y="296.980165532206" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2b6cb0" text-anchor="middle">3.02x</text>
+  <line x1="620.1" y1="430" x2="620.1" y2="436" stroke="#2d3748" stroke-width="1.5"/>
+  <text x="620.1" y="452" font-family="sans-serif" font-size="12" font-weight="bold" fill="#2d3748" text-anchor="middle">10^6</text>
+  <circle cx="850.0" cy="342.8" r="7" fill="#3182ce" stroke="#ffffff" stroke-width="2.5"/>
+  <text x="850.0" y="328.759490848772" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2b6cb0" text-anchor="middle">2.21x</text>
+  <line x1="850.0" y1="430" x2="850.0" y2="436" stroke="#2d3748" stroke-width="1.5"/>
+  <text x="850.0" y="452" font-family="sans-serif" font-size="12" font-weight="bold" fill="#2d3748" text-anchor="middle">20M</text>
+  <text x="470.0" y="485" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2d3748" text-anchor="middle">Tamaño del Arreglo N (Escala Logarítmica)</text>
+  <text transform="rotate(-90)" x="-250.0" y="32" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2d3748" text-anchor="middle">Speedup Observado (T_escalar / T_vectorial)</text>
+</svg>
