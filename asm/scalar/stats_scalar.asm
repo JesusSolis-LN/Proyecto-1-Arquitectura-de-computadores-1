@@ -28,11 +28,19 @@ sum_array:
     xor     eax, eax           ; eax = i = 0
     xorps   xmm0, xmm0         ; xmm0 = acumulador = 0.0
 
+    xorps   xmm2, xmm2         ; compensacion de suma = 0
+
 .sum_loop:
     cmp     eax, esi
     jge     .sum_done
     movss   xmm1, [rdi + rax*4]
-    addss   xmm0, xmm1
+    subss   xmm1, xmm2         ; y = arr[i] - compensacion
+    movaps  xmm3, xmm0
+    addss   xmm3, xmm1         ; t = suma + y
+    movaps  xmm2, xmm3
+    subss   xmm2, xmm0
+    subss   xmm2, xmm1         ; compensacion = (t - suma) - y
+    movaps  xmm0, xmm3         ; suma = t
     inc     eax
     jmp     .sum_loop
 
@@ -92,11 +100,21 @@ compute_stats:
     movaps  xmm2, xmm0         ; xmm2 = max
     mov     eax, 1             ; eax = i = 1
 
+    xorps   xmm7, xmm7         ; compensacion de suma = 0
+
 .pass1_loop:
     cmp     eax, r13d
     jge     .pass1_done
     movss   xmm3, [r12 + rax*4]; xmm3 = arr[i]
-    addss   xmm0, xmm3         ; suma += arr[i]
+    ; Conservar xmm3 intacto para min y max
+    movaps  xmm6, xmm3
+    subss   xmm6, xmm7         ; y = arr[i] - compensacion
+    movaps  xmm8, xmm0
+    addss   xmm8, xmm6         ; t = suma + y
+    movaps  xmm7, xmm8
+    subss   xmm7, xmm0
+    subss   xmm7, xmm6         ; compensacion = (t - suma) - y
+    movaps  xmm0, xmm8         ; suma = t
     minss   xmm1, xmm3         ; min = min(min, arr[i])
     maxss   xmm2, xmm3         ; max = max(max, arr[i])
     inc     eax
