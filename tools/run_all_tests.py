@@ -128,7 +128,8 @@ def verify_target(target_name, input_path, out_bin, out_stats, ref):
             passed = False
             norm_max_err = float("inf")
         else:
-            norm_max_err = max(abs(a - b) for a, b in zip(out_norm, ref["norm"]))
+            norm_max_err = (max(abs(a - b) for a, b in zip(out_norm, ref["norm"]))
+                            if all(math.isfinite(a) for a in out_norm) else float("inf"))
             if norm_max_err > TOLERANCE:
                 passed = False
 
@@ -180,8 +181,28 @@ def main():
         out_vc_bin = os.path.join(DATA_DIR, f"{tag}_vc.dat")
         out_vc_stats = f"{out_vc_bin}.stats.txt"
 
+        # Evitar resultados obsoletos de una ejecución anterior.
+        for path in (out_sc_bin, out_sc_stats, out_vc_bin, out_vc_stats):
+            if os.path.exists(path):
+                os.remove(path)
+
         write_input_bin(in_path, n, vals)
+        # Usar los valores realmente almacenados en float32 como entrada
+        # de la referencia de mayor precisión de Python.
+        vals = list(struct.unpack(f"<{n}f", struct.pack(f"<{n}f", *vals)))
         ref = compute_reference(vals)
+
+        if n == 0:
+            ok = True
+            for binary, output in ((BIN_SCALAR, out_sc_bin), (BIN_VECTOR, out_vc_bin)):
+                rc, _, stderr = run_command([binary, in_path, output, "1"])
+                rejected = (rc != 0 and "N debe ser mayor que cero" in stderr
+                            and not os.path.exists(output)
+                            and not os.path.exists(output + ".stats.txt"))
+                ok = ok and rejected
+            all_passed = all_passed and ok
+            print(f"{title:<35} | {n:>5} | Rechazo controlado: {'PASA' if ok else 'FALLA'}")
+            continue
 
         # Ejecutar escalar
         rc_sc, _, err_sc = run_command([BIN_SCALAR, in_path, out_sc_bin, "1"])
@@ -212,7 +233,7 @@ def main():
     print(sep)
     print()
     if all_passed:
-        print("[3/3] RESULTADO FINAL: TODAS LAS PRUEBAS PASARON EXITOSAMENTE (100% CORRECTUD)")
+        print("[3/3] RESULTADO FINAL: TODOS LOS CASOS EJECUTADOS PASARON (no garantiza otros tamaños)")
         sys.exit(0)
     else:
         print("[3/3] RESULTADO FINAL: AL MENOS UNA PRUEBA FALLÓ")

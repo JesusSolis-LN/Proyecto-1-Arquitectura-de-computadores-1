@@ -49,8 +49,8 @@ static float *read_input(const char *path, int *out_n) {
         fclose(f);
         exit(EXIT_FAILURE);
     }
-    if (n < 0) {
-        fprintf(stderr, "Error: N invalido (%d)\n", n);
+    if (n <= 0) {
+        fprintf(stderr, "Error: N debe ser mayor que cero (%d)\n", n);
         fclose(f);
         exit(EXIT_FAILURE);
     }
