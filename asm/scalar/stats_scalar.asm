@@ -119,13 +119,22 @@ compute_stats:
     xor     eax, eax           ; eax = i = 0
     xorps   xmm6, xmm6         ; xmm6 = acumulador de diferencias al cuadrado = 0.0
 
+    xorps   xmm7, xmm7         ; compensacion Kahan = 0.0
+
 .pass2_loop:
     cmp     eax, r13d
     jge     .pass2_done
     movss   xmm3, [r12 + rax*4]; xmm3 = arr[i]
     subss   xmm3, xmm5         ; xmm3 = arr[i] - mean
     mulss   xmm3, xmm3         ; xmm3 = (arr[i] - mean)^2
-    addss   xmm6, xmm3         ; xmm6 += (arr[i] - mean)^2
+    ; Suma compensada de Kahan, manteniendo float32
+    subss   xmm3, xmm7         ; y = termino - compensacion
+    movaps  xmm8, xmm6         ; t = suma
+    addss   xmm8, xmm3         ; t = suma + y
+    movaps  xmm7, xmm8
+    subss   xmm7, xmm6         ; compensacion = t - suma
+    subss   xmm7, xmm3         ; compensacion = (t - suma) - y
+    movaps  xmm6, xmm8         ; suma = t
     inc     eax
     jmp     .pass2_loop
 
