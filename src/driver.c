@@ -49,8 +49,8 @@ static float *read_input(const char *path, int *out_n) {
         fclose(f);
         exit(EXIT_FAILURE);
     }
-    if (n < 0) {
-        fprintf(stderr, "Error: N invalido (%d)\n", n);
+    if (n <= 0) {
+        fprintf(stderr, "Error: N debe ser mayor que cero (%d)\n", n);
         fclose(f);
         exit(EXIT_FAILURE);
     }
@@ -82,7 +82,7 @@ static void write_output(const char *path, const float *arr, int n) {
  * tenga que parsear el binario de salida). */
 static void write_stats_summary(const char *path, int n, float sum,
                                  float mean, float var, float stddev,
-                                 float min, float max, double ms) {
+                                 float min, float max, double ms, double sd_ms, int reps) {
     FILE *f = fopen(path, "w");
     if (!f) {
         fprintf(stderr, "Aviso: no se pudo crear el resumen '%s'\n", path);
@@ -95,7 +95,9 @@ static void write_stats_summary(const char *path, int n, float sum,
     fprintf(f, "stddev=%.9g\n", stddev);
     fprintf(f, "min=%.9g\n", min);
     fprintf(f, "max=%.9g\n", max);
-    fprintf(f, "kernel_ms=%.6f\n", ms);
+    fprintf(f, "kernel_ms=%.9g\n", ms);
+    fprintf(f, "kernel_sd_ms=%.9g\n", sd_ms);
+    fprintf(f, "repetitions=%d\n", reps);
     fclose(f);
 }
 
@@ -125,7 +127,14 @@ int main(int argc, char **argv) {
     float *out = alloc_aligned_floats((size_t)(n > 0 ? n : 1));
 
     float sum = 0.0f, mean = 0.0f, var = 0.0f, min = 0.0f, max = 0.0f;
-    double total_ms = 0.0;
+    double avg_ms = 0.0, m2_ms = 0.0;
+    double *samples = calloc((size_t)reps, sizeof(*samples));
+    if (!samples) {
+        fprintf(stderr, "Error: no se pudo reservar el registro de tiempos\n");
+        free(in);
+        free(out);
+        return EXIT_FAILURE;
+    }
     struct timespec t0, t1;
 
     /* --- Seccion medida: sum_array + compute_stats + normalize_array --- */
@@ -138,9 +147,13 @@ int main(int argc, char **argv) {
         normalize_array(in, out, n, mean, stddev_r);
 
         clock_gettime(CLOCK_MONOTONIC, &t1);
-        total_ms += elapsed_ms(t0, t1);
+        samples[r] = elapsed_ms(t0, t1);
+        /* Welford: estadística de tiempos fuera de la región medida. */
+        double delta = samples[r] - avg_ms;
+        avg_ms += delta / (r + 1);
+        m2_ms += delta * (samples[r] - avg_ms);
     }
-    double avg_ms = total_ms / reps;
+    double sd_ms = reps > 1 ? sqrt(fmax(0.0, m2_ms / (reps - 1))) : 0.0;
     float stddev = sqrtf(var);
 
     printf("N        = %d\n", n);
@@ -152,13 +165,31 @@ int main(int argc, char **argv) {
     printf("Maximo   = %.6f\n", max);
     printf("Tiempo promedio del kernel (%d rep.): %.6f ms\n", reps, avg_ms);
 
+    printf("Desviacion estandar muestral del tiempo: %.9g ms\n", sd_ms);
+    if (reps == 1) printf("Nota: una repeticion no permite estimar dispersion.\n");
     write_output(output_path, out, n);
 
     char summary_path[1024];
     snprintf(summary_path, sizeof(summary_path), "%s.stats.txt", output_path);
-    write_stats_summary(summary_path, n, sum, mean, var, stddev, min, max, avg_ms);
+    write_stats_summary(summary_path, n, sum, mean, var, stddev, min, max, avg_ms, sd_ms, reps);
 
+    char timings_path[1024];
+    int path_len = snprintf(timings_path, sizeof(timings_path), "%s.timings.csv", output_path);
+    FILE *timings = (path_len >= 0 && (size_t)path_len < sizeof(timings_path))
+                    ? fopen(timings_path, "w") : NULL;
+    int timings_ok = timings != NULL;
+    if (timings) {
+        if (fprintf(timings, "repetition,kernel_ms\n") < 0) timings_ok = 0;
+        for (int r = 0; r < reps; ++r)
+            if (fprintf(timings, "%d,%.17g\n", r + 1, samples[r]) < 0) timings_ok = 0;
+        if (fclose(timings) != 0) timings_ok = 0;
+    }
+    free(samples);
     free(in);
     free(out);
+    if (!timings_ok) {
+        fprintf(stderr, "Error: no se pudo guardar el registro de tiempos\n");
+        return EXIT_FAILURE;
+    }
     return EXIT_SUCCESS;
 }

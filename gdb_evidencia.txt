@@ -1,0 +1,33 @@
+Punto de interrupción temporal 1 at 0x1c0f: file asm/vector/stats_vector.asm, line 39.
+[Depuración de hilo usando libthread_db enabled]
+Using host libthread_db library "/usr/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Temporary breakpoint 1, sum_array.sum_vec_loop () at asm/vector/stats_vector.asm:39
+39	    cmp     eax, ecx
+=> 0x555555555c0f <sum_array.sum_vec_loop>:	cmp    %ecx,%eax
+   0x555555555c11 <sum_array.sum_vec_loop+2>:	jge    0x555555555c21 <sum_array.sum_reduce>
+   0x555555555c13 <sum_array.sum_vec_loop+4>:	vmovaps (%rdi,%rax,4),%ymm1
+   0x555555555c18 <sum_array.sum_vec_loop+9>:	vaddps %ymm1,%ymm0,%ymm0
+43	    add     eax, 8
+
+--- YMM0 inmediatamente después de vaddps: primer bloque ---
+$1 = {38.1082726, 83.0199966, -8.5684824, -47.0287628, -59.8036995, -86.5399475, 5.08868551, 23.7346439}
+0x55555555a200:	38.1082726	83.0199966	-8.5684824	-47.0287628
+0x55555555a210:	-59.8036995	-86.5399475	5.08868551	23.7346439
+Punto de interrupción temporal 2 at 0x555555555dc7: file asm/vector/stats_vector.asm, line 248.
+
+Temporary breakpoint 2, normalize_array () at asm/vector/stats_vector.asm:248
+248	    test    edx, edx
+
+--- Cantidad y alineación de salida ---
+$2 = 16
+$3 = 0
+main (argc=<optimized out>, argv=<optimized out>) at src/driver.c:149
+149	        clock_gettime(CLOCK_MONOTONIC, &t1);
+
+--- Los 16 valores después de normalize_array ---
+0x555555559520:	0.899751365	1.82348073	-0.0602805801	-0.851318777
+0x555555559530:	-1.11406946	-1.66397166	0.220615491	0.60411936
+0x555555559540:	0.433919936	-1.76031005	-0.264672101	0.745006025
+0x555555559550:	0.608530402	0.83828491	0.671271443	-1.13035667
+[Inferior 1 (process 35702) exited normally]
