@@ -182,13 +182,20 @@ compute_stats:
     test    ecx, ecx
     jle     .pass2_reduce
 
+    vxorps  ymm6, ymm6, ymm6       ; compensacion Kahan por carril
+
 .pass2_vec_loop:
     cmp     eax, ecx
     jge     .pass2_reduce
     vmovaps ymm1, [r12 + rax*4]    ; carga 8 floats
     vsubps  ymm1, ymm1, ymm3       ; ymm1 = arr[i..i+7] - mean
     vmulps  ymm1, ymm1, ymm1       ; ymm1 = (arr[i..i+7] - mean)^2
-    vaddps  ymm0, ymm0, ymm1       ; acumula diferencias al cuadrado
+    ; Kahan: ocho acumulaciones independientes en float32
+    vsubps  ymm1, ymm1, ymm6       ; y = cuadrado - compensacion
+    vaddps  ymm7, ymm0, ymm1       ; t = suma + y
+    vsubps  ymm6, ymm7, ymm0
+    vsubps  ymm6, ymm6, ymm1       ; compensacion = (t - suma) - y
+    vmovaps ymm0, ymm7            ; suma = t
     add     eax, 8
     jmp     .pass2_vec_loop
 
@@ -199,6 +206,8 @@ compute_stats:
     vhaddps xmm0, xmm0, xmm0
     vhaddps xmm0, xmm0, xmm0       ; xmm0[0] = suma cuadrática parcial
 
+    vxorps  xmm6, xmm6, xmm6       ; compensacion del remanente
+
 .pass2_tail_loop:
     ; Bucle de remanente escalar para la varianza
     cmp     eax, r13d
@@ -206,7 +215,11 @@ compute_stats:
     vmovss  xmm1, [r12 + rax*4]
     vsubss  xmm1, xmm1, xmm5       ; xmm1 = arr[i] - mean
     vmulss  xmm1, xmm1, xmm1       ; xmm1 = (arr[i] - mean)^2
-    vaddss  xmm0, xmm0, xmm1       ; acumula
+    vsubss  xmm1, xmm1, xmm6
+    vaddss  xmm7, xmm0, xmm1
+    vsubss  xmm6, xmm7, xmm0
+    vsubss  xmm6, xmm6, xmm1
+    vmovaps xmm0, xmm7
     inc     eax
     jmp     .pass2_tail_loop
 
